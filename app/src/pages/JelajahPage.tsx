@@ -5,6 +5,7 @@ import {
   hitungJarakHaversine,
   KATEGORI_LABELS,
   MOCK_VENUES,
+  searchVenuesSmart,
   WILAYAH_INDONESIA,
   type Destinasi,
   type KategoriWisata,
@@ -64,18 +65,16 @@ export default function JelajahPage() {
     return Math.max(0, totalQuota - totalUsed);
   };
 
-  const results = useMemo<VenueEntry[]>(() => {
-    const q = keyword.trim().toLowerCase();
-    const list = MOCK_VENUES.filter((v) => {
+  const { results, usedFuzzy, suggestedTerm } = useMemo(() => {
+    const base = MOCK_VENUES.filter((v) => {
       if (!v.isPublished) return false;
       if (kota !== 'all' && v.kotaKode !== kota) return false;
       if (kategori !== 'all' && v.kategori !== kategori) return false;
-      if (q) {
-        const hay = `${v.nama} ${v.lokasi} ${v.venueCode} ${v.deskripsi}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
       return true;
-    }).map((v) => ({
+    });
+
+    const smart = searchVenuesSmart(base, keyword);
+    const list: VenueEntry[] = smart.items.map((v) => ({
       venue: v,
       distanceMeters: userCoords
         ? hitungJarakHaversine(userCoords.lat, userCoords.lng, v.koordinat.lat, v.koordinat.lng)
@@ -87,10 +86,15 @@ export default function JelajahPage() {
       list.sort((a, b) => a.venue.hargaMulai - b.venue.hargaMulai);
     } else if (sortBy === 'terdekat' && userCoords) {
       list.sort((a, b) => (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity));
-    } else {
+    } else if (!smart.usedFuzzy) {
       list.sort((a, b) => b.venue.jumlahUlasan - a.venue.jumlahUlasan);
     }
-    return list;
+
+    return {
+      results: list,
+      usedFuzzy: smart.usedFuzzy,
+      suggestedTerm: smart.suggestedTerm,
+    };
   }, [keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
 
   const activeFilterCount =
@@ -155,7 +159,7 @@ export default function JelajahPage() {
                 type="text"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                placeholder="Nama wisata atau LOKA-XXXX..."
+                placeholder="Nama wisata atau kota..."
                 className="w-full h-10 px-3.5 rounded-xl bg-white border border-gray-300 text-sm text-[#111827] placeholder:text-gray-400"
               />
             </div>
@@ -248,6 +252,21 @@ export default function JelajahPage() {
               Akses GPS tidak diizinkan. Anda tetap dapat memilih wilayah secara manual.
             </p>
           )}
+        </div>
+      )}
+
+      {usedFuzzy && suggestedTerm && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
+          <span>
+            Menampilkan hasil terdekat untuk <strong className="text-[#111827]">"{keyword.trim()}"</strong>.
+          </span>
+          <button
+            type="button"
+            onClick={() => setKeyword(suggestedTerm)}
+            className="font-bold text-[#111827] underline underline-offset-4 hover:text-black"
+          >
+            Maksud Anda: {suggestedTerm}?
+          </button>
         </div>
       )}
 

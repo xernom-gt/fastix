@@ -98,3 +98,10 @@ export interface FilterCariWisata {
   kategori?: KategoriWisata | 'all';
   sortBy?: 'terdekat' | 'popularitas' | 'harga_asc' | 'harga_desc';
 }
+
+export interface VenueSearchMeta {
+  total: number;
+  tanggal: string;
+  isFuzzyMatch: boolean;
+  correctedQuery: string | null;
+}

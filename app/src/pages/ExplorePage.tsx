@@ -6,6 +6,7 @@ import {
   hitungJarakHaversine,
   KATEGORI_LABELS,
   MOCK_VENUES,
+  searchVenuesSmart,
   WILAYAH_INDONESIA,
   type Destinasi,
   type KategoriWisata,
@@ -116,34 +117,35 @@ export default function ExplorePage() {
     };
   }, [publishedVenues]);
 
-  const results = useMemo<VenueEntry[]>(() => {
-    const q = keyword.trim().toLowerCase();
-    const list = publishedVenues
-      .filter((v) => {
-        if (kota !== 'all' && v.kotaKode !== kota) return false;
-        if (kategori !== 'all' && v.kategori !== kategori) return false;
-        if (q) {
-          const hay = `${v.nama} ${v.lokasi} ${v.venueCode} ${v.deskripsi}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      })
-      .map((v) => ({
-        venue: v,
-        distanceMeters: userCoords
-          ? hitungJarakHaversine(userCoords.lat, userCoords.lng, v.koordinat.lat, v.koordinat.lng)
-          : null,
-        remainingQuota: computeRemaining(v),
-      }));
+  const { results, usedFuzzy, suggestedTerm } = useMemo(() => {
+    const base = publishedVenues.filter((v) => {
+      if (kota !== 'all' && v.kotaKode !== kota) return false;
+      if (kategori !== 'all' && v.kategori !== kategori) return false;
+      return true;
+    });
+
+    const smart = searchVenuesSmart(base, keyword);
+    const list: VenueEntry[] = smart.items.map((v) => ({
+      venue: v,
+      distanceMeters: userCoords
+        ? hitungJarakHaversine(userCoords.lat, userCoords.lng, v.koordinat.lat, v.koordinat.lng)
+        : null,
+      remainingQuota: computeRemaining(v),
+    }));
 
     if (sortBy === 'harga_asc') {
       list.sort((a, b) => a.venue.hargaMulai - b.venue.hargaMulai);
     } else if (sortBy === 'terdekat' && userCoords) {
       list.sort((a, b) => (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity));
-    } else {
+    } else if (!smart.usedFuzzy) {
       list.sort((a, b) => b.venue.jumlahUlasan - a.venue.jumlahUlasan);
     }
-    return list;
+
+    return {
+      results: list,
+      usedFuzzy: smart.usedFuzzy,
+      suggestedTerm: smart.suggestedTerm,
+    };
   }, [publishedVenues, keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
 
   const featuredSlides = useMemo(() => publishedVenues.slice(0, 4), [publishedVenues]);
@@ -560,7 +562,7 @@ export default function ExplorePage() {
               type="text"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              placeholder="Cari nama wisata atau kode LOKA-XXXX..."
+              placeholder="Cari nama wisata atau kota..."
               className="w-full h-10 px-3.5 rounded-xl bg-white border border-gray-300 text-sm text-[#111827] placeholder:text-gray-400"
             />
           </div>
@@ -616,6 +618,21 @@ export default function ExplorePage() {
             </select>
           </div>
         </div>
+
+        {usedFuzzy && suggestedTerm && (
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
+            <span>
+              Menampilkan hasil terdekat untuk <strong className="text-[#111827]">"{keyword.trim()}"</strong>.
+            </span>
+            <button
+              type="button"
+              onClick={() => setKeyword(suggestedTerm)}
+              className="font-bold text-[#111827] underline underline-offset-4 hover:text-black"
+            >
+              Maksud Anda: {suggestedTerm}?
+            </button>
+          </div>
+        )}
 
         {results.length === 0 ? (
           <div className="bg-gray-50 border border-gray-200 rounded-2xl p-10 text-center space-y-3">

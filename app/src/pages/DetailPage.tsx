@@ -80,7 +80,7 @@ export default function DetailPage() {
           </span>
           <span>Kembali ke Katalog</span>
         </Link>
-        <div className="sm:w-96">
+        <div className="w-full sm:w-auto">
           <BookingStepper currentStep={1} />
         </div>
       </div>
