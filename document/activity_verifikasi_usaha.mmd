@@ -1,0 +1,50 @@
+flowchart LR
+    subgraph C["Customer (Calon Owner)"]
+        direction TB
+        S((Mulai))
+        C1["Login ke Pariwisloka App"]
+        C2["Masuk ke menu Daftar Mitra Wisata"]
+        C3["Mengisi draf tempat wisata<br/>(nama, kota, alamat, lokasi, deskripsi)"]
+        C4["Mengunggah KTP, NPWP, NIB<br/>& data rekening bank"]
+        C5["Menekan tombol Ajukan Verifikasi"]
+        C6["Melengkapi / memperbaiki data"]
+        C7["Menerima notifikasi hasil verifikasi"]
+        E((Selesai))
+    end
+
+    subgraph SYS["Sistem"]
+        direction TB
+        S1{"Data & dokumen<br/>lengkap?"}
+        S2["Menempelkan watermark pada<br/>foto KTP & NPWP"]
+        S3["Mengenkripsi nomor KTP & NPWP<br/>(AES-256) & simpan foto<br/>ke private storage"]
+        S4["Membuat kode wisata LOKA-XXXX<br/>(is_published = FALSE)"]
+        S5["Mengubah status verifikasi<br/>menjadi PENDING"]
+        S6["Status = REJECTED<br/>+ simpan alasan penolakan"]
+        S7["Transaksi atomik:<br/>status = APPROVED<br/>role user = OWNER<br/>is_published = TRUE<br/>buat saldo owner (0)"]
+        S8["Mengirim notifikasi<br/>ke pengaju"]
+    end
+
+    subgraph A["Internal Admin (Pariwisloka HQ)"]
+        direction TB
+        A1["Membuka daftar pengajuan PENDING"]
+        A2["Memeriksa dokumen ber-watermark<br/>& data usaha"]
+        A3{"Dokumen valid?"}
+        A4["Menekan tombol Tolak<br/>& mengisi alasan penolakan"]
+        A5["Menekan tombol Setujui"]
+    end
+
+    S --> C1 --> C2 --> C3 --> C4 --> C5 --> S1
+    S1 -- Tidak --> C6 --> C5
+    S1 -- Ya --> S2 --> S3 --> S4 --> S5 --> A1
+    A1 --> A2 --> A3
+    A3 -- Tidak valid --> A4 --> S6 --> S8
+    A3 -- Valid --> A5 --> S7 --> S8
+    S8 --> C7
+    C7 --> R{"Disetujui?"}
+    R -- Ya --> E
+    R -- Tidak --> C6
+
+    classDef act fill:#7DD3F5,stroke:#1B6F99,color:#000
+    classDef term fill:#000,stroke:#000,color:#fff
+    class C1,C2,C3,C4,C5,C6,C7,S1,S2,S3,S4,S5,S6,S7,S8,A1,A2,A3,A4,A5,R act
+    class S,E term

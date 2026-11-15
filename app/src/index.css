@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    overscroll-behavior: none;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  a[href],
+  button:not(:disabled),
+  select:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid #111827;
+    outline-offset: 2px;
+  }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}
+
+@keyframes fastixGlideIn {
+  from {
+    transform: translate3d(14px, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fastixRingFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-8px, -6px, 0);
+  }
+}
+
+.fx-glide-track {
+  transition: transform 560ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+
+.fx-fade-up {
+  animation: fastixGlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.fx-ring-slow {
+  animation: fastixRingFloat 18s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.fx-ring-slow-reverse {
+  animation: fastixRingFloat 22s cubic-bezier(0.45, 0, 0.55, 1) infinite reverse;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-glide-track {
+    transition: none !important;
+  }
+  .fx-fade-up,
+  .fx-ring-slow,
+  .fx-ring-slow-reverse {
+    animation: none !important;
+  }
+}

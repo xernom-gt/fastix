@@ -1,0 +1,128 @@
+erDiagram
+    users ||--o| owner_legalities : "mengajukan KYB"
+    users ||--o{ venues : "memiliki (owner)"
+    users ||--o| owner_balances : "punya saldo"
+    users ||--o{ balance_mutations : "riwayat mutasi"
+    users ||--o{ payouts : "tarik dana"
+    users ||--o{ transactions : "membeli (customer)"
+    venues ||--o{ staffs : "punya staff gate"
+    venues ||--o{ tickets : "jual jenis tiket"
+    venues ||--o{ transactions : "1 invoice = 1 venue"
+    transactions ||--|{ transaction_items : "berisi"
+    tickets ||--o{ transaction_items : "dipesan"
+    transaction_items ||--o{ redemptions : "terbit per qty"
+    staffs ||--o{ redemptions : "memindai"
+
+    users {
+        UUID id PK
+        VARCHAR phone_number UK "NOT NULL"
+        VARCHAR full_name "NOT NULL"
+        VARCHAR email UK
+        VARCHAR role "CUSTOMER | OWNER"
+        TIMESTAMP created_at
+    }
+    owner_legalities {
+        UUID id PK
+        UUID user_id FK,UK
+        VARCHAR ktp_number "AES-256"
+        TEXT ktp_photo_url "private + watermark"
+        VARCHAR npwp_number "AES-256"
+        TEXT npwp_photo_url "private + watermark"
+        VARCHAR nib_number
+        VARCHAR bank_code
+        VARCHAR bank_account_number
+        VARCHAR bank_account_name
+        VARCHAR verification_status "NOT_SUBMITTED|PENDING|APPROVED|REJECTED"
+        TEXT rejection_reason
+        TIMESTAMP updated_at
+    }
+    venues {
+        UUID id PK
+        UUID owner_id FK
+        VARCHAR venue_code UK "LOKA-XXXX"
+        VARCHAR name
+        VARCHAR city
+        TEXT address
+        DECIMAL latitude
+        DECIMAL longitude
+        TEXT description
+        BOOLEAN is_published
+        TIMESTAMP created_at
+    }
+    staffs {
+        UUID id PK
+        UUID venue_id FK
+        VARCHAR staff_name
+        VARCHAR pin_hash "bcrypt"
+        BOOLEAN is_active
+        TIMESTAMP created_at
+    }
+    tickets {
+        UUID id PK
+        UUID venue_id FK
+        VARCHAR title
+        DECIMAL price
+        INT daily_quota
+        BOOLEAN is_active
+    }
+    transactions {
+        UUID id PK
+        UUID customer_id FK
+        UUID venue_id FK "NOT NULL"
+        VARCHAR invoice_number UK "PWL/INV/YYYYMMDD/XXXX"
+        DECIMAL total_amount
+        DECIMAL platform_fee
+        VARCHAR payment_status "PENDING|PAID|EXPIRED|CANCELLED"
+        VARCHAR payment_gateway_ref
+        TEXT qr_string
+        TIMESTAMP expired_at "now + 15 menit"
+        TIMESTAMP paid_at
+        TIMESTAMP created_at
+    }
+    transaction_items {
+        UUID id PK
+        UUID transaction_id FK
+        UUID ticket_id FK
+        DATE booking_date
+        INT quantity
+        DECIMAL unit_price
+        BOOLEAN is_released "H+1"
+    }
+    redemptions {
+        UUID id PK
+        UUID transaction_item_id FK
+        VARCHAR ticket_code UK "PWL-TIX-XXXXXXXX"
+        VARCHAR signature_hash "HMAC-SHA256"
+        VARCHAR status "VALID|REDEEMED|EXPIRED"
+        TIMESTAMP redeemed_at
+        UUID redeemed_by_staff_id FK
+    }
+    owner_balances {
+        UUID id PK
+        UUID owner_id FK,UK
+        DECIMAL pending_balance
+        DECIMAL available_balance
+        TIMESTAMP updated_at
+    }
+    balance_mutations {
+        UUID id PK
+        UUID owner_id FK
+        DECIMAL amount
+        VARCHAR type "PAYIN_INFLOW|HOLDING_RELEASED|PAYOUT_WITHDRAW|PAYOUT_REFUND"
+        UUID reference_id "transaction / payout (polimorfik)"
+        TEXT description
+        TIMESTAMP created_at
+    }
+    payouts {
+        UUID id PK
+        UUID owner_id FK
+        DECIMAL amount
+        DECIMAL admin_fee
+        VARCHAR bank_code
+        VARCHAR bank_account_number
+        VARCHAR bank_account_name
+        VARCHAR status "PENDING|PROCESSING|SUCCESS|FAILED"
+        VARCHAR gateway_disbursement_id
+        TIMESTAMP created_at
+        TIMESTAMP transferred_at
+    }

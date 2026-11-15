@@ -1,0 +1,20 @@
+{
+  "name": "pariwisloka-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "dev:landing": "pnpm --filter @pariwisloka/landing dev",
+    "dev:app": "pnpm --filter @pariwisloka/app dev",
+    "dev:admin": "pnpm --filter @pariwisloka/admin dev",
+    "dev:all": "pnpm -r --parallel dev",
+    "build:landing": "pnpm --filter @pariwisloka/landing build",
+    "build:app": "pnpm --filter @pariwisloka/app build",
+    "build:admin": "pnpm --filter @pariwisloka/admin build",
+    "build:all": "pnpm -r build",
+    "lint:all": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "@rolldown/binding-win32-x64-msvc": "1.2.19"
+  }
+}

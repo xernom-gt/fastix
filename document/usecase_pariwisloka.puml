@@ -1,0 +1,99 @@
+@startuml usecase_pariwisloka
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+
+actor "Guest" as Guest
+actor "Customer" as Customer
+actor "Owner Wisata" as Owner
+actor "Staff Gate" as Staff
+actor "Internal Admin" as Admin
+actor "Payment Gateway\n(Midtrans/Xendit)" as PG <<system>>
+actor "Scheduler\n(Cron 23:59 WIB)" as Cron <<system>>
+
+Customer -|> Guest
+Owner -|> Customer
+
+rectangle "Pariwisloka App" {
+  usecase "Jelajahi Katalog Wisata per Kota" as UC1
+  usecase "Lihat Detail Wisata, Harga & Sisa Kuota" as UC2
+  usecase "Login (OTP / Google)" as UC3
+  usecase "Checkout Tiket (1 Venue, 1 Tanggal)" as UC4
+  usecase "Validasi Kuota Harian (Anti-Overbooking)" as UC4a
+  usecase "Bayar via QRIS (batas 15 menit)" as UC5
+  usecase "Batalkan Pesanan PENDING" as UC6
+  usecase "Lihat E-Ticket QR" as UC7
+  usecase "Lihat Riwayat Transaksi" as UC8
+  usecase "Ajukan Draf Wisata + Dokumen KYB\n(KTP, NPWP, NIB, Rekening)" as UC9
+
+  usecase "Kelola Detail Wisata" as UC10
+  usecase "Kelola Jenis Tiket, Harga & Kuota" as UC11
+  usecase "Kelola Akun & PIN Staff Gate" as UC12
+  usecase "Lihat Laporan Omzet & Saldo" as UC13
+  usecase "Ajukan Penarikan Dana (Payout)" as UC14
+}
+
+rectangle "Pariwisloka Gate" {
+  usecase "Login Kode Wisata + PIN" as UC15
+  usecase "Sinkron Tiket Harian (Offline)" as UC16
+  usecase "Scan & Validasi QR E-Ticket" as UC17
+  usecase "Verifikasi HMAC Offline" as UC17a
+  usecase "Upload Antrean Scan Offline" as UC18
+}
+
+rectangle "Pariwisloka HQ" {
+  usecase "Login Admin Internal" as UC19
+  usecase "Periksa Dokumen KYB (Watermark)" as UC20
+  usecase "Setujui / Tolak Pengajuan Owner" as UC21
+  usecase "Pantau Escrow & Mutasi Saldo" as UC22
+  usecase "Pantau Payout" as UC23
+}
+
+rectangle "Proses Sistem" {
+  usecase "Konfirmasi Pembayaran (Webhook PAID)" as UC24
+  usecase "Terbitkan Tiket QR + Tambah Saldo Tertahan" as UC24a
+  usecase "Status Transfer (Webhook Disbursement)" as UC25
+  usecase "Kedaluwarsakan Transaksi > 15 Menit" as UC26
+  usecase "Rilis Saldo H+1 & Expire Tiket No-Show" as UC27
+}
+
+Guest --> UC1
+Guest --> UC2
+Guest --> UC3
+
+Customer --> UC4
+Customer --> UC6
+Customer --> UC7
+Customer --> UC8
+Customer --> UC9
+UC4 ..> UC4a : <<include>>
+UC4 ..> UC5 : <<include>>
+
+Owner --> UC10
+Owner --> UC11
+Owner --> UC12
+Owner --> UC13
+Owner --> UC14
+
+Staff --> UC15
+Staff --> UC16
+Staff --> UC17
+Staff --> UC18
+UC17a ..> UC17 : <<extend>>
+
+Admin --> UC19
+Admin --> UC20
+Admin --> UC21
+Admin --> UC22
+Admin --> UC23
+UC21 ..> UC20 : <<include>>
+
+PG --> UC24
+PG --> UC25
+UC24 ..> UC24a : <<include>>
+UC5 <-- PG
+UC14 --> PG
+
+Cron --> UC26
+Cron --> UC27
+@enduml
