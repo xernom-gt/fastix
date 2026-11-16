@@ -5,8 +5,8 @@ interface B2CCatalogSectionProps {
 }
 
 const TOURIST_FLOW = [
-  { icon: 'qr_code_scanner', label: 'Bayar QRIS (Kunci kuota 15 menit)' },
-  { icon: 'verified', label: 'E-Ticket HMAC terbit otomatis' },
+  { icon: 'qr_code_scanner', label: 'Bayar QRIS dengan kuota terkunci 15 menit' },
+  { icon: 'verified', label: 'E-ticket langsung terbit di ponsel' },
   { icon: 'door_open', label: 'Pindai di loket tanpa antre' },
 ];
 
@@ -18,10 +18,12 @@ export function B2CCatalogSection({ appUrl }: B2CCatalogSectionProps) {
       <div className="max-w-6xl mx-auto px-5 sm:px-8 space-y-12">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wider text-teal-800">Wisatawan</p>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
-              3 Destinasi Siap Kunjung
+              Destinasi Siap Kunjung
             </h2>
+            <p className="text-sm sm:text-base text-gray-600">
+              Pilih lokasi wisata, cek kuota harian, dan pesan tiket langsung dari ponsel.
+            </p>
           </div>
           <a
             href={`${appUrl}/explore`}
@@ -31,7 +33,6 @@ export function B2CCatalogSection({ appUrl }: B2CCatalogSectionProps) {
           </a>
         </div>
 
-        {/* 3 Best Destination Highlights */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {featuredVenues.map((venue) => {
             const sisaKuota = venue.tickets.reduce(
@@ -42,7 +43,7 @@ export function B2CCatalogSection({ appUrl }: B2CCatalogSectionProps) {
             return (
               <article
                 key={venue.id}
-                className="bg-white border border-gray-200 rounded-2xl overflow-hidden flex flex-col hover:border-gray-400 transition-colors"
+                className="bg-white border border-gray-200 rounded-xl overflow-hidden flex flex-col hover:border-gray-400 transition-colors"
               >
                 <div className="aspect-[16/10] bg-gray-200 overflow-hidden">
                   <img
