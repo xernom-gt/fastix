@@ -86,12 +86,9 @@ export default function GateLoginPage() {
               <span className="font-extrabold text-xl tracking-tight">Fastix Gate</span>
             </Link>
 
-            <Link
-              to="/mitra"
-              className="text-xs font-bold text-gray-600 hover:text-[#111827] transition-colors"
-            >
-              Mode Owner
-            </Link>
+            <span className="px-2.5 py-1 rounded-full bg-gray-100 text-[11px] font-bold text-gray-700">
+              Loket Check-in
+            </span>
           </div>
 
           <div className="space-y-1">
@@ -158,8 +155,8 @@ export default function GateLoginPage() {
             <Link to="/explore" className="hover:text-[#111827] font-semibold">
               Kembali ke Beranda
             </Link>
-            <Link to="/akun" className="hover:text-[#111827] font-semibold">
-              Akun Wisatawan
+            <Link to="/mitra" className="hover:text-[#111827] font-semibold">
+              Portal Owner
             </Link>
           </div>
         </div>

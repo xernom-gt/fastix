@@ -208,40 +208,46 @@ export default function GateScanPage() {
   const redeemedCount = venueTickets.filter((t) => t.status === 'REDEEMED').length;
 
   return (
-    <div className="min-h-screen bg-gray-50 text-[#111827] pb-12">
-      {/* Top Gate Bar */}
-      <header className="sticky top-0 z-30 bg-[#111827] text-white border-b border-white/10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-gray-100 text-[#111827] pb-12">
+      {/* Operational Loket Header */}
+      <header className="sticky top-0 z-30 bg-[#090D16] text-white border-b border-white/10">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-white/15 border border-white/15 flex items-center justify-center shrink-0">
               <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
                 qr_code_scanner
               </span>
             </span>
-            <div>
-              <p className="text-sm font-extrabold leading-tight">{staff.venueName}</p>
-              <p className="text-[11px] text-gray-300">
-                {staff.venueCode} • Petugas: {staff.name}
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold leading-tight truncate">{staff.venueName}</p>
+              <p className="text-[11px] text-gray-300 truncate">
+                {staff.venueCode} • {staff.name}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setIsOfflineMode((prev) => !prev)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+              className={`px-3 py-1.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 border transition-colors ${
                 isOfflineMode
                   ? 'bg-amber-400 text-[#111827] border-amber-300'
-                  : 'bg-white/15 text-white border-white/20 hover:bg-white/25'
+                  : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30 hover:bg-emerald-500/30'
               }`}
             >
-              {isOfflineMode ? 'Mode Offline Aktif' : 'Mode Online'}
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isOfflineMode ? 'bg-[#111827]' : 'bg-emerald-400'
+                }`}
+                aria-hidden="true"
+              />
+              <span>{isOfflineMode ? 'Offline' : 'Online'}</span>
             </button>
             <button
               type="button"
               onClick={handleLogout}
-              className="px-3.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors"
+              className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors"
             >
               Keluar
             </button>
@@ -331,7 +337,27 @@ export default function GateScanPage() {
                 </div>
               )}
 
-              {/* Input Manual Fallback */}
+              {outcome && (
+                <div
+                  role="status"
+                  className={`rounded-2xl p-4 space-y-1.5 shadow-sm ${
+                    outcome.accepted
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-red-700 text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                      {outcome.accepted ? 'check_circle' : 'cancel'}
+                    </span>
+                    <p className="text-sm font-extrabold">{outcome.headline}</p>
+                  </div>
+                  <p className="text-xs font-medium text-white/90">{outcome.detail}</p>
+                  <p className="text-[11px] font-mono text-white/75">{outcome.ticketCode}</p>
+                </div>
+              )}
+
+              {/* Input Manual Fallback (One-handed mobile friendly) */}
               <form onSubmit={handleManualSubmit} className="space-y-2.5 pt-1">
                 <label
                   htmlFor="gate-manual-code"
@@ -339,18 +365,18 @@ export default function GateScanPage() {
                 >
                   Input / Paste Kode Tiket Manual
                 </label>
-                <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex flex-col sm:flex-row gap-2.5">
                   <input
                     id="gate-manual-code"
                     type="text"
                     value={manualInput}
                     onChange={(e) => setManualInput(e.target.value)}
                     placeholder="PWL-TIX-9A8B7C6D"
-                    className="flex-1 h-11 px-3.5 rounded-xl border border-gray-300 font-mono text-sm text-[#111827] focus:border-[#111827] focus:outline-none"
+                    className="flex-1 h-12 px-4 rounded-xl border border-gray-300 font-mono text-sm text-[#111827] focus:border-[#111827] focus:outline-none"
                   />
                   <button
                     type="submit"
-                    className="h-11 px-5 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold whitespace-nowrap transition-colors"
+                    className="h-12 px-6 rounded-xl bg-[#111827] hover:bg-black text-white text-sm font-extrabold whitespace-nowrap transition-colors"
                   >
                     Validasi Tiket
                   </button>
@@ -364,28 +390,13 @@ export default function GateScanPage() {
                       key={t.id}
                       type="button"
                       onClick={() => processTicketCode(t.ticketCode)}
-                      className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 font-mono text-[11px] font-bold text-[#111827] transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 font-mono text-[11px] font-bold text-[#111827] transition-colors"
                     >
                       {t.ticketCode}
                     </button>
                   ))}
                 </div>
               </form>
-
-              {outcome && (
-                <div
-                  role="status"
-                  className={`rounded-2xl border p-4 space-y-1 ${
-                    outcome.accepted
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                      : 'bg-red-50 border-red-300 text-red-900'
-                  }`}
-                >
-                  <p className="text-sm font-extrabold">{outcome.headline}</p>
-                  <p className="text-xs font-medium">{outcome.detail}</p>
-                  <p className="text-[11px] font-mono opacity-80">{outcome.ticketCode}</p>
-                </div>
-              )}
             </section>
 
             {/* Panel Antrean Offline Sync */}
