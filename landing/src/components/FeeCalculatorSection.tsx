@@ -18,10 +18,12 @@ export function FeeCalculatorSection() {
         {/* Left: Crisp Pricing Summary */}
         <div className="lg:col-span-5 space-y-6">
           <div className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wider text-teal-800">Biaya Layanan</p>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
               Gratis untuk acara bebas biaya, 2,5% untuk tiket berbayar.
             </h2>
+            <p className="text-sm sm:text-base text-gray-600">
+              Tanpa biaya langganan bulanan. Potongan hanya berlaku saat tiket terjual.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -52,7 +54,7 @@ export function FeeCalculatorSection() {
         </div>
 
         {/* Right: Interactive Calculator */}
-        <div className="lg:col-span-7 rounded-2xl bg-white border border-gray-200 p-6 sm:p-8 space-y-6">
+        <div className="lg:col-span-7 rounded-xl bg-white border border-gray-300 shadow-sm p-6 sm:p-8 space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <div className="space-y-2">
               <label htmlFor="calc-price" className="block text-xs font-bold text-gray-700">

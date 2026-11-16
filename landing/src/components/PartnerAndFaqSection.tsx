@@ -14,7 +14,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Apa syarat mendaftar sebagai mitra Fastix?',
-    a: 'Siapkan KTP penanggung jawab, NPWP, NIB, dan rekening resmi untuk verifikasi KYB serta pencairan Escrow H+1.',
+    a: 'Siapkan KTP penanggung jawab, NPWP, NIB, dan rekening usaha untuk verifikasi mitra serta pencairan dana H+1.',
   },
 ];
 
@@ -92,16 +92,15 @@ export function PartnerAndFaqSection() {
       <section id="daftar-mitra" className="bg-white border-t border-gray-200 py-20 sm:py-28">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
           <div className="lg:col-span-5 space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-teal-800">Daftar Mitra</p>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
               Daftarkan Destinasi Anda
             </h2>
             <p className="text-sm text-gray-600 leading-relaxed">
-              Isi kontak singkat untuk verifikasi KYB dan aktivasi kode <code className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">LOKA-XXXX</code>.
+              Isi data singkat pengelola wisata. Tim kami akan menghubungi untuk verifikasi dokumen usaha dan aktivasi loket Fastix.
             </p>
           </div>
 
-          <div className="lg:col-span-7 bg-gray-50 border border-gray-200 rounded-2xl p-6 sm:p-8">
+          <div className="lg:col-span-7 bg-gray-50 border border-gray-200 rounded-xl p-6 sm:p-8">
             {submittedLead ? (
               <div className="space-y-4 py-2" role="status">
                 <p className="text-base font-extrabold text-gray-900">
@@ -227,12 +226,9 @@ export function PartnerAndFaqSection() {
             Pertanyaan Umum
           </h2>
 
-          <div className="space-y-3">
+          <div className="divide-y divide-gray-200 border-y border-gray-200 bg-white px-5 sm:px-6 rounded-xl">
             {FAQ_ITEMS.map((item) => (
-              <details
-                key={item.q}
-                className="group rounded-2xl border border-gray-200 bg-white px-5 py-4"
-              >
+              <details key={item.q} className="group py-4">
                 <summary className="flex items-center justify-between gap-4 font-bold text-sm text-gray-900 cursor-pointer list-none min-h-[32px]">
                   <span>{item.q}</span>
                   <span
