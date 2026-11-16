@@ -4,7 +4,6 @@ import {
   getTodayISO,
   hitungJarakHaversine,
   KATEGORI_LABELS,
-  MOCK_VENUES,
   searchVenuesSmart,
   WILAYAH_INDONESIA,
   type Destinasi,
@@ -15,7 +14,7 @@ import { useBookings } from '../store/bookingStore';
 
 export default function JelajahPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { getExtraUsedQuota } = useBookings();
+  const { venues, getExtraUsedQuota } = useBookings();
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [keyword, setKeyword] = useState(searchParams.get('q') ?? '');
@@ -66,7 +65,7 @@ export default function JelajahPage() {
   };
 
   const { results, usedFuzzy, suggestedTerm } = useMemo(() => {
-    const base = MOCK_VENUES.filter((v) => {
+    const base = venues.filter((v) => {
       if (!v.isPublished) return false;
       if (kota !== 'all' && v.kotaKode !== kota) return false;
       if (kategori !== 'all' && v.kategori !== kategori) return false;

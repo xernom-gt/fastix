@@ -5,7 +5,6 @@ import {
   getTodayISO,
   hitungJarakHaversine,
   KATEGORI_LABELS,
-  MOCK_VENUES,
   searchVenuesSmart,
   WILAYAH_INDONESIA,
   type Destinasi,
@@ -42,7 +41,7 @@ const WILAYAH_SHORT: Record<string, string> = {
 
 export default function ExplorePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { getExtraUsedQuota } = useBookings();
+  const { venues, getExtraUsedQuota } = useBookings();
 
   const [keyword, setKeyword] = useState(searchParams.get('q') ?? '');
   const [kota, setKota] = useState(searchParams.get('kota') ?? 'all');
@@ -84,7 +83,7 @@ export default function ExplorePage() {
     );
   };
 
-  const publishedVenues = useMemo(() => MOCK_VENUES.filter((v) => v.isPublished), []);
+  const publishedVenues = useMemo(() => venues.filter((v) => v.isPublished), [venues]);
 
   const computeRemaining = (v: Destinasi) => {
     const totalQuota = v.tickets.reduce((acc, t) => acc + t.dailyQuota, 0);

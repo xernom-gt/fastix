@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { formatRupiah, getTodayISO, MOCK_VENUES } from '@pariwisloka/shared';
+import { formatRupiah, getTodayISO } from '@pariwisloka/shared';
 import { BookingStepper } from '../components/BookingStepper';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
@@ -12,9 +12,9 @@ export default function DetailPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { createCheckout, getExtraUsedQuota } = useBookings();
+  const { createCheckout, getExtraUsedQuota, getVenueById } = useBookings();
 
-  const venue = MOCK_VENUES.find((v) => v.id === id);
+  const venue = id ? getVenueById(id) : undefined;
 
   const [bookingDate, setBookingDate] = useState(searchParams.get('tanggal') ?? getTodayISO());
   const [selectedTicketId, setSelectedTicketId] = useState(venue?.tickets[0]?.id ?? '');

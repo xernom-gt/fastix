@@ -4,6 +4,7 @@ import {
   generateMockSignatureHash,
   generateTicketCode,
   getTodayISO,
+  MOCK_VENUES,
   type Destinasi,
   type ETicket,
   type TicketProduct,
@@ -16,6 +17,9 @@ interface BookingState {
 }
 
 interface BookingContextValue extends BookingState {
+  venues: Destinasi[];
+  updateVenues: (next: Destinasi[]) => void;
+  getVenueById: (venueId: string) => Destinasi | undefined;
   createCheckout: (params: {
     venue: Destinasi;
     ticket: TicketProduct;
@@ -23,12 +27,14 @@ interface BookingContextValue extends BookingState {
     quantity: number;
   }) => Transaction;
   simulateWebhookPaid: (transactionId: string, holderName: string) => ETicket[];
+  redeemTicket: (ticketCode: string) => ETicket | null;
   cancelTransaction: (transactionId: string) => void;
   expireTransaction: (transactionId: string) => void;
   getExtraUsedQuota: (ticketId: string, bookingDate: string) => number;
 }
 
-const STORAGE_KEY = 'pariwisloka_bookings_v1';
+const STORAGE_KEY = 'fastix_bookings_v1';
+const VENUES_STORAGE_KEY = 'fastix_venues_v1';
 
 const SEED_TICKET: ETicket = {
   id: 'tix_seed_01',
@@ -47,6 +53,34 @@ const SEED_TICKET: ETicket = {
   paidAt: new Date().toISOString(),
 };
 
+const SEED_REDEEMED_TICKET: ETicket = {
+  id: 'tix_seed_02',
+  ticketCode: 'PWL-TIX-1F3C8B50',
+  invoiceNumber: 'PWL/INV/20261116/8799',
+  venueId: 'tirta-gangga',
+  venueCode: 'LOKA-0142',
+  venueName: 'Tirta Gangga Water Palace',
+  venueAddress: 'Jl. Raya Abang Desa Adat, Karangasem, Bali 80852',
+  ticketTitle: 'Tiket Masuk Domestik',
+  bookingDate: getTodayISO(),
+  signatureHash: 'hmac_9a1b50e3',
+  qrPayload: `PWL-TIX-1F3C8B50|tirta-gangga|${getTodayISO()}|hmac_9a1b50e3`,
+  status: 'REDEEMED',
+  holderName: 'Dimas Anggara',
+  paidAt: new Date().toISOString(),
+  redeemedAt: new Date().toISOString(),
+};
+
+function loadVenues(): Destinasi[] {
+  try {
+    const raw = localStorage.getItem(VENUES_STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as Destinasi[];
+  } catch {
+    // fallback to seed venues
+  }
+  return MOCK_VENUES;
+}
+
 function loadBookings(): BookingState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -56,7 +90,7 @@ function loadBookings(): BookingState {
   }
   return {
     transactions: [],
-    tickets: [SEED_TICKET],
+    tickets: [SEED_TICKET, SEED_REDEEMED_TICKET],
   };
 }
 
@@ -66,11 +100,19 @@ const PLATFORM_FEE_PER_TICKET = 2500;
 
 export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<BookingState>(loadBookings);
+  const [venues, setVenues] = useState<Destinasi[]>(loadVenues);
 
   const persist = (next: BookingState) => {
     setState(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
+
+  const updateVenues = (next: Destinasi[]) => {
+    setVenues(next);
+    localStorage.setItem(VENUES_STORAGE_KEY, JSON.stringify(next));
+  };
+
+  const getVenueById = (venueId: string) => venues.find((v) => v.id === venueId);
 
   const createCheckout: BookingContextValue['createCheckout'] = ({
     venue,
@@ -165,6 +207,21 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return issuedTickets;
   };
 
+  const redeemTicket = (ticketCode: string): ETicket | null => {
+    const target = state.tickets.find(
+      (t) => t.ticketCode.toUpperCase() === ticketCode.trim().toUpperCase(),
+    );
+    if (!target || target.status !== 'VALID') return null;
+
+    const redeemedAt = new Date().toISOString();
+    const updated: ETicket = { ...target, status: 'REDEEMED', redeemedAt };
+    persist({
+      ...state,
+      tickets: state.tickets.map((t) => (t.id === target.id ? updated : t)),
+    });
+    return updated;
+  };
+
   const cancelTransaction = (transactionId: string) => {
     persist({
       ...state,
@@ -208,8 +265,12 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     <BookingContext.Provider
       value={{
         ...state,
+        venues,
+        updateVenues,
+        getVenueById,
         createCheckout,
         simulateWebhookPaid,
+        redeemTicket,
         cancelTransaction,
         expireTransaction,
         getExtraUsedQuota,
