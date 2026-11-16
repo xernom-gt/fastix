@@ -80,9 +80,16 @@ export const AppLayout: React.FC = () => {
 
             {isAuthenticated && user ? (
               <div className="flex items-center gap-2">
-                <span className="hidden sm:inline-block text-xs font-semibold text-white bg-white/15 px-3 py-1.5 rounded-xl border border-white/15">
-                  {user.fullName}
-                </span>
+                <Link
+                  to="/akun"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-xl border border-white/15 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                    person
+                  </span>
+                  <span className="hidden sm:inline">{user.fullName}</span>
+                  <span className="sm:hidden">Akun</span>
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -234,15 +241,19 @@ export const AppLayout: React.FC = () => {
           </span>
           <span>Tiket Saya</span>
         </NavLink>
-        <Link
-          to={isAuthenticated ? '/tiket' : '/login'}
-          className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold text-gray-500"
+        <NavLink
+          to={isAuthenticated ? '/akun' : '/login?redirect=/akun'}
+          className={({ isActive }) =>
+            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
+              isActive ? 'text-[#111827]' : 'text-gray-500'
+            }`
+          }
         >
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             person
           </span>
           <span>{isAuthenticated ? 'Akun' : 'Masuk'}</span>
-        </Link>
+        </NavLink>
       </nav>
     </div>
   );

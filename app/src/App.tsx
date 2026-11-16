@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './components/AppLayout';
+import AccountPage from './pages/AccountPage';
 import CheckoutPage from './pages/CheckoutPage';
 import DetailPage from './pages/DetailPage';
 import ExplorePage from './pages/ExplorePage';
@@ -24,6 +25,7 @@ export default function App() {
               <Route path="/checkout/:invoiceId" element={<CheckoutPage />} />
               <Route path="/tiket" element={<TicketsPage />} />
               <Route path="/tiket/:ticketCode" element={<TicketsPage />} />
+              <Route path="/akun" element={<AccountPage />} />
               <Route path="*" element={<Navigate to="/explore" replace />} />
             </Route>
           </Routes>
