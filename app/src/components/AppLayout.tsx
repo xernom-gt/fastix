@@ -13,6 +13,11 @@ export const AppLayout: React.FC = () => {
       isActive ? 'bg-white/20 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'
     }`;
 
+  const bottomNavClass = ({ isActive }: { isActive: boolean }) =>
+    `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+      isActive ? 'text-[#111827]' : 'text-gray-500'
+    }`;
+
   return (
     <div className="min-h-screen flex flex-col bg-white text-[#111827]">
       {/* Top Utility Bar (Desktop) */}
@@ -213,29 +218,21 @@ export const AppLayout: React.FC = () => {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navigasi bawah mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-3 h-16"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-4 h-16"
       >
-        <NavLink
-          to="/explore"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
+        <NavLink to="/explore" end className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+            home
+          </span>
+          <span>Beranda</span>
+        </NavLink>
+        <NavLink to="/jelajah" className={bottomNavClass}>
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             explore
           </span>
           <span>Jelajah</span>
         </NavLink>
-        <NavLink
-          to="/tiket"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
+        <NavLink to="/tiket" className={bottomNavClass}>
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             qr_code_2
           </span>
@@ -243,16 +240,12 @@ export const AppLayout: React.FC = () => {
         </NavLink>
         <NavLink
           to={isAuthenticated ? '/akun' : '/login?redirect=/akun'}
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
+          className={bottomNavClass}
         >
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             person
           </span>
-          <span>{isAuthenticated ? 'Akun' : 'Masuk'}</span>
+          <span>Akun</span>
         </NavLink>
       </nav>
     </div>
