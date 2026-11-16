@@ -4,8 +4,11 @@ import AccountPage from './pages/AccountPage';
 import CheckoutPage from './pages/CheckoutPage';
 import DetailPage from './pages/DetailPage';
 import ExplorePage from './pages/ExplorePage';
+import GateLoginPage from './pages/GateLoginPage';
+import GateScanPage from './pages/GateScanPage';
 import JelajahPage from './pages/JelajahPage';
 import LoginPage from './pages/LoginPage';
+import MitraDashboardPage from './pages/MitraDashboardPage';
 import TicketsPage from './pages/TicketsPage';
 import { AuthProvider } from './store/authStore';
 import { BookingProvider } from './store/bookingStore';
@@ -17,6 +20,8 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/gate/login" element={<GateLoginPage />} />
+            <Route path="/gate/scan" element={<GateScanPage />} />
             <Route element={<AppLayout />}>
               <Route index element={<Navigate to="/explore" replace />} />
               <Route path="/explore" element={<ExplorePage />} />
@@ -26,6 +31,7 @@ export default function App() {
               <Route path="/tiket" element={<TicketsPage />} />
               <Route path="/tiket/:ticketCode" element={<TicketsPage />} />
               <Route path="/akun" element={<AccountPage />} />
+              <Route path="/mitra" element={<MitraDashboardPage />} />
               <Route path="*" element={<Navigate to="/explore" replace />} />
             </Route>
           </Routes>
