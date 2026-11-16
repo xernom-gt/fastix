@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [phone, setPhone] = useState('');
   const [step, setStep] = useState<'input' | 'otp'>('input');
   const [otp, setOtp] = useState('');
+  const [showGooglePicker, setShowGooglePicker] = useState(false);
   const [error, setError] = useState('');
 
   const isPhoneReady = phone.replace(/\D/g, '').length >= 9;
@@ -38,8 +39,12 @@ export default function LoginPage() {
     navigate(redirectTo, { replace: true });
   };
 
-  const handleGoogle = () => {
-    loginWithGoogle();
+  const handleGoogleSelect = (email: string) => {
+    const loggedIn = loginWithGoogle(email);
+    if (loggedIn.role === 'OWNER') {
+      navigate('/mitra', { replace: true });
+      return;
+    }
     navigate(redirectTo, { replace: true });
   };
 
@@ -165,7 +170,7 @@ export default function LoginPage() {
 
               <button
                 type="button"
-                onClick={handleGoogle}
+                onClick={() => setShowGooglePicker((prev) => !prev)}
                 className="w-full h-11 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 active:scale-[0.98] text-xs sm:text-sm font-semibold text-[#111827] flex items-center justify-center gap-2 transition-all duration-200"
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
@@ -173,6 +178,40 @@ export default function LoginPage() {
                 </span>
                 <span>Masuk dengan Google</span>
               </button>
+
+              {showGooglePicker && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-2.5 space-y-1.5">
+                  <p className="px-1.5 text-[11px] font-semibold text-gray-500">
+                    Pilih akun Google simulasi:
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleGoogleSelect('raka.pratama@gmail.com')}
+                    className="w-full text-left px-3 py-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 flex items-center justify-between gap-2 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#111827] truncate">Raka Pratama</p>
+                      <p className="text-[11px] text-gray-500 truncate">raka.pratama@gmail.com</p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-gray-100 text-[10px] font-bold text-gray-700 shrink-0">
+                      Wisatawan
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGoogleSelect('bagus@tirtagangga.id')}
+                    className="w-full text-left px-3 py-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 flex items-center justify-between gap-2 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#111827] truncate">Anak Agung Bagus</p>
+                      <p className="text-[11px] text-gray-500 truncate">bagus@tirtagangga.id</p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-[#111827] text-[10px] font-bold text-white shrink-0">
+                      Owner
+                    </span>
+                  </button>
+                </div>
+              )}
 
               <button
                 type="button"
@@ -184,6 +223,21 @@ export default function LoginPage() {
                 </span>
                 <span>Masuk Demo Owner (Tirta Gangga · LOKA-0142)</span>
               </button>
+
+              <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                <Link to="/explore" className="hover:text-[#111827] font-semibold transition-colors">
+                  Kembali ke Beranda
+                </Link>
+                <Link
+                  to="/gate/login"
+                  className="inline-flex items-center gap-1 font-semibold text-gray-600 hover:text-[#111827] transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                    qr_code_scanner
+                  </span>
+                  <span>Masuk sebagai Staff</span>
+                </Link>
+              </div>
             </form>
           ) : (
             <form key="step-otp" onSubmit={handleVerifyOtp} className="fx-fade-up space-y-4">

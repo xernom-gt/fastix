@@ -40,8 +40,8 @@ export const AppLayout: React.FC = () => {
 
       {/* Main Fastix Monochrome Header */}
       <header className="sticky top-0 z-40 bg-[#111827] text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <Link to="/explore" className="flex items-center gap-2.5 shrink-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between md:grid md:grid-cols-3 gap-4">
+          <Link to="/explore" className="flex items-center gap-2.5 shrink-0 md:justify-self-start">
             <span className="w-9 h-9 rounded-xl bg-white/15 border border-white/20 text-white flex items-center justify-center">
               <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
                 confirmation_number
@@ -52,7 +52,7 @@ export const AppLayout: React.FC = () => {
 
           <nav
             aria-label="Menu aplikasi utama"
-            className="hidden md:flex items-center gap-1 bg-white/10 border border-white/10 rounded-full p-1"
+            className="hidden md:flex items-center justify-self-center gap-1 bg-white/10 border border-white/10 rounded-full p-1 whitespace-nowrap"
           >
             <NavLink to="/explore" end className={navClass}>
               Beranda
@@ -71,7 +71,7 @@ export const AppLayout: React.FC = () => {
             </a>
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2 md:justify-self-end">
             <button
               type="button"
               aria-label="Cari destinasi"

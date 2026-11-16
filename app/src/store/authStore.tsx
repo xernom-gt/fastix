@@ -13,10 +13,23 @@ interface AuthContextValue {
   user: CustomerUser | null;
   isAuthenticated: boolean;
   loginWithPhone: (phoneNumber: string, fullName: string) => void;
-  loginWithGoogle: () => void;
+  loginWithGoogle: (email?: string) => CustomerUser;
   loginAsDemoOwner: () => void;
   logout: () => void;
 }
+
+const REGISTERED_OWNER_GOOGLE_ACCOUNTS: Record<
+  string,
+  { id: string; fullName: string; phoneNumber: string; email: string; ownedVenueIds: string[] }
+> = {
+  'bagus@tirtagangga.id': {
+    id: 'usr_owner_tirta',
+    fullName: 'Anak Agung Bagus',
+    phoneNumber: '081238889900',
+    email: 'bagus@tirtagangga.id',
+    ownedVenueIds: ['tirta-gangga'],
+  },
+};
 
 const STORAGE_KEY = 'fastix_customer_session_v1';
 
@@ -52,14 +65,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginWithGoogle = () => {
-    saveUser({
-      id: 'usr_google_001',
-      fullName: 'Raka Pratama',
-      phoneNumber: '081234567890',
-      email: 'raka.pratama@gmail.com',
-      role: 'CUSTOMER',
-    });
+  const loginWithGoogle = (email?: string): CustomerUser => {
+    const normalizedEmail = email?.trim().toLowerCase() ?? '';
+    const ownerProfile = REGISTERED_OWNER_GOOGLE_ACCOUNTS[normalizedEmail];
+
+    const nextUser: CustomerUser = ownerProfile
+      ? {
+          ...ownerProfile,
+          role: 'OWNER',
+        }
+      : {
+          id: 'usr_google_001',
+          fullName: 'Raka Pratama',
+          phoneNumber: '081234567890',
+          email: normalizedEmail || 'raka.pratama@gmail.com',
+          role: 'CUSTOMER',
+        };
+
+    saveUser(nextUser);
+    return nextUser;
   };
 
   const loginAsDemoOwner = () => {
