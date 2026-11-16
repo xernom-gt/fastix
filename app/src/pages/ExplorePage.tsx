@@ -713,7 +713,7 @@ export default function ExplorePage() {
           Temukan Wisata Menarik di Kotamu!
         </h2>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="flex sm:grid sm:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto sm:overflow-visible snap-x snap-mandatory pb-2 sm:pb-0 -mx-4 px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {WILAYAH_INDONESIA.map((w) => {
             const active = kota === w.kode;
             return (
@@ -721,7 +721,7 @@ export default function ExplorePage() {
                 key={w.kode}
                 type="button"
                 onClick={() => selectRegion(w.kode)}
-                className={`group rounded-2xl p-4 flex flex-col items-center justify-between gap-5 border transition-all hover:-translate-y-0.5 ${
+                className={`group shrink-0 w-[200px] sm:w-auto snap-start rounded-2xl p-4 flex flex-col items-center justify-between gap-5 border transition-all hover:-translate-y-0.5 ${
                   active
                     ? 'bg-gray-100 border-[#111827] ring-1 ring-[#111827]'
                     : 'bg-gray-50 border-gray-200 hover:border-gray-300'
@@ -734,7 +734,7 @@ export default function ExplorePage() {
                 </div>
 
                 <div className="w-full flex items-center justify-between gap-1.5">
-                  <span className="flex-1 px-3 py-1 rounded-full bg-[#111827] text-white text-[10px] font-extrabold tracking-wide uppercase truncate">
+                  <span className="flex-1 px-3 py-1 rounded-full bg-[#111827] text-white text-[10px] font-extrabold tracking-wide uppercase whitespace-nowrap text-center">
                     {WILAYAH_SHORT[w.kode] ?? w.provinsi}
                   </span>
                   <span className="w-6 h-6 rounded-full bg-[#111827] text-white flex items-center justify-center shrink-0 group-hover:bg-black transition-colors">
