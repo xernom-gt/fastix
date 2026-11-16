@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatRupiah, getTodayISO, MOCK_VENUES, StatusBadge, WILAYAH_INDONESIA } from '@pariwisloka/shared';
+import { formatRupiah, getTodayISO, MOCK_VENUES, WILAYAH_INDONESIA } from '@pariwisloka/shared';
 
 interface HeroSectionProps {
   appUrl: string;
@@ -27,15 +27,14 @@ export function HeroSection({ appUrl }: HeroSectionProps) {
 
   return (
     <section className="bg-white pt-12 pb-16 sm:pt-20 sm:pb-24">
-      <div className="max-w-6xl mx-auto px-5 sm:px-8 space-y-14">
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 space-y-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
-          {/* Concise Hero: Brand Value + 1 Sentence + Clear CTAs */}
           <div className="lg:col-span-6 space-y-6">
             <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-gray-900 leading-[1.12]">
               Tiket wisata instan, kendali kuota penuh.
             </h1>
             <p className="text-base sm:text-lg text-gray-600 leading-relaxed max-w-lg">
-              Fastix menyatukan pembelian e-ticket QRIS untuk wisatawan dan manajemen kuota real-time bagi pengelola destinasi.
+              Fastix menyatukan pembelian e-ticket QRIS untuk wisatawan dan pengaturan kuota harian bagi pengelola destinasi.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-1">
@@ -54,35 +53,43 @@ export function HeroSection({ appUrl }: HeroSectionProps) {
             </div>
           </div>
 
-          {/* Visual-First Mockup: B2B Quota Card + B2C E-Ticket */}
           <div className="lg:col-span-6">
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-stretch">
-              <div className="sm:col-span-7 rounded-2xl border border-gray-200 bg-gray-50 p-4 flex flex-col justify-between gap-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-gray-600">{HERO_VENUE.venueCode}</span>
-                  <StatusBadge module="kyb" status="APPROVED" size="sm" />
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <div className="relative aspect-[16/9] bg-gray-200 overflow-hidden">
+                <img
+                  src={HERO_VENUE.gambarUrl}
+                  alt={HERO_VENUE.gambarAlt}
+                  width={640}
+                  height={360}
+                  fetchPriority="high"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
+                  <span className="px-2.5 py-1 rounded-md bg-gray-900/80 text-white text-xs font-medium whitespace-nowrap">
+                    {HERO_VENUE.lokasi}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-md bg-white/95 text-teal-900 text-xs font-bold whitespace-nowrap">
+                    Tersedia Hari Ini
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="space-y-1">
+                  <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-snug">
+                    {HERO_VENUE.nama}
+                  </h2>
                 </div>
 
-                <div className="aspect-[16/10] rounded-xl overflow-hidden bg-gray-200">
-                  <img
-                    src={HERO_VENUE.gambarUrl}
-                    alt={HERO_VENUE.gambarAlt}
-                    width={640}
-                    height={400}
-                    fetchPriority="high"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="rounded-xl bg-white border border-gray-200 p-3">
-                    <span className="block text-[11px] text-gray-500">Sisa Kuota</span>
+                <div className="grid grid-cols-2 gap-3 pt-1 border-t border-gray-100">
+                  <div className="pt-2">
+                    <span className="block text-xs text-gray-500">Sisa Kuota Hari Ini</span>
                     <span className="text-base font-extrabold text-gray-900">
-                      {HERO_QUOTA_LEFT}/{HERO_VENUE.tickets[0].dailyQuota}
+                      {HERO_QUOTA_LEFT} / {HERO_VENUE.tickets[0].dailyQuota} tiket
                     </span>
                   </div>
-                  <div className="rounded-xl bg-white border border-gray-200 p-3">
-                    <span className="block text-[11px] text-gray-500">Mulai Dari</span>
+                  <div className="pt-2">
+                    <span className="block text-xs text-gray-500">Harga Mulai</span>
                     <span className="text-base font-extrabold text-teal-800">
                       {formatRupiah(HERO_VENUE.hargaMulai)}
                     </span>
@@ -90,22 +97,12 @@ export function HeroSection({ appUrl }: HeroSectionProps) {
                 </div>
               </div>
 
-              <div className="sm:col-span-5 rounded-2xl bg-gray-900 text-white p-4 flex flex-col justify-between gap-4 shadow-lg">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-gray-300">E-Ticket</span>
-                  <StatusBadge module="redemption" status="VALID" size="sm" />
-                </div>
-
-                <div className="bg-white text-gray-900 rounded-xl p-3.5 space-y-3">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-medium text-gray-500 truncate">{HERO_VENUE.lokasi}</p>
-                    <p className="text-xs font-extrabold text-gray-900 truncate">{HERO_VENUE.nama}</p>
-                  </div>
-
-                  <div className="py-2 border-y border-dashed border-gray-200 flex items-center justify-center">
+              <div className="bg-gray-900 text-white px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-lg bg-white text-gray-900 p-1.5 shrink-0 flex items-center justify-center">
                     <svg
                       viewBox="0 0 80 80"
-                      className="w-20 h-20 text-gray-900"
+                      className="w-full h-full"
                       role="img"
                       aria-label="Pratinjau kode QR E-Ticket Fastix"
                     >
@@ -125,16 +122,15 @@ export function HeroSection({ appUrl }: HeroSectionProps) {
                       <rect x="68" y="62" width="8" height="12" fill="currentColor" />
                     </svg>
                   </div>
-
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-mono font-bold text-gray-700">PWL-TIX-8821A9</span>
-                    <span className="font-bold text-gray-900">QRIS</span>
+                  <div className="space-y-0.5">
+                    <span className="block text-xs text-gray-300">Contoh E-Ticket QRIS</span>
+                    <span className="block font-mono text-sm font-bold text-white">FX-8821-A9</span>
                   </div>
                 </div>
 
                 <a
                   href={`${appUrl}/destinasi/${HERO_VENUE.id}`}
-                  className="min-h-[44px] inline-flex items-center justify-center rounded-lg bg-white hover:bg-gray-100 text-gray-900 text-xs font-bold transition-colors"
+                  className="min-h-[44px] inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white hover:bg-gray-100 text-gray-900 text-xs font-bold whitespace-nowrap transition-colors shrink-0"
                 >
                   Lihat di Aplikasi
                 </a>
@@ -143,10 +139,9 @@ export function HeroSection({ appUrl }: HeroSectionProps) {
           </div>
         </div>
 
-        {/* Clean Single-Row Search Bar */}
         <form
           onSubmit={handleSearch}
-          className="bg-gray-50 border border-gray-200 rounded-2xl p-4 sm:p-5"
+          className="bg-gray-50 border border-gray-200 rounded-xl p-4 sm:p-5"
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
             <div className="lg:col-span-4 space-y-1.5">
