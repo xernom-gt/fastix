@@ -5,7 +5,7 @@ import { useAuth } from '../store/authStore';
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { loginWithPhone, loginWithGoogle } = useAuth();
+  const { loginWithPhone, loginWithGoogle, loginAsDemoOwner } = useAuth();
 
   const redirectTo = searchParams.get('redirect') || '/explore';
 
@@ -41,6 +41,12 @@ export default function LoginPage() {
   const handleGoogle = () => {
     loginWithGoogle();
     navigate(redirectTo, { replace: true });
+  };
+
+  const handleDemoOwner = () => {
+    loginAsDemoOwner();
+    const target = searchParams.get('redirect') || '/mitra';
+    navigate(target, { replace: true });
   };
 
   return (
@@ -166,6 +172,17 @@ export default function LoginPage() {
                   account_circle
                 </span>
                 <span>Masuk dengan Google</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDemoOwner}
+                className="w-full h-11 rounded-xl bg-gray-100 border border-gray-200 hover:bg-gray-200 active:scale-[0.98] text-xs font-bold text-[#111827] flex items-center justify-center gap-2 transition-all duration-200"
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                  storefront
+                </span>
+                <span>Masuk Demo Owner (Tirta Gangga · LOKA-0142)</span>
               </button>
             </form>
           ) : (

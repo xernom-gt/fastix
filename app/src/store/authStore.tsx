@@ -6,6 +6,7 @@ export interface CustomerUser {
   phoneNumber: string;
   email?: string;
   role: 'CUSTOMER' | 'OWNER';
+  ownedVenueIds?: string[];
 }
 
 interface AuthContextValue {
@@ -13,10 +14,11 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   loginWithPhone: (phoneNumber: string, fullName: string) => void;
   loginWithGoogle: () => void;
+  loginAsDemoOwner: () => void;
   logout: () => void;
 }
 
-const STORAGE_KEY = 'pariwisloka_customer_session';
+const STORAGE_KEY = 'fastix_customer_session_v1';
 
 function loadSession(): CustomerUser | null {
   try {
@@ -60,6 +62,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const loginAsDemoOwner = () => {
+    saveUser({
+      id: 'usr_owner_tirta',
+      fullName: 'Anak Agung Bagus',
+      phoneNumber: '081238889900',
+      role: 'OWNER',
+      ownedVenueIds: ['tirta-gangga'],
+    });
+  };
+
   const logout = () => saveUser(null);
 
   return (
@@ -69,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated: Boolean(user),
         loginWithPhone,
         loginWithGoogle,
+        loginAsDemoOwner,
         logout,
       }}
     >

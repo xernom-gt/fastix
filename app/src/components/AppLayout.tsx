@@ -13,6 +13,11 @@ export const AppLayout: React.FC = () => {
       isActive ? 'bg-white/20 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'
     }`;
 
+  const bottomNavClass = ({ isActive }: { isActive: boolean }) =>
+    `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+      isActive ? 'text-[#111827]' : 'text-gray-500'
+    }`;
+
   return (
     <div className="min-h-screen flex flex-col bg-white text-[#111827]">
       {/* Top Utility Bar (Desktop) */}
@@ -80,9 +85,16 @@ export const AppLayout: React.FC = () => {
 
             {isAuthenticated && user ? (
               <div className="flex items-center gap-2">
-                <span className="hidden sm:inline-block text-xs font-semibold text-white bg-white/15 px-3 py-1.5 rounded-xl border border-white/15">
-                  {user.fullName}
-                </span>
+                <Link
+                  to="/akun"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-xl border border-white/15 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                    person
+                  </span>
+                  <span className="hidden sm:inline">{user.fullName}</span>
+                  <span className="sm:hidden">Akun</span>
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -166,6 +178,11 @@ export const AppLayout: React.FC = () => {
                     Cek E-Ticket QRIS
                   </Link>
                 </li>
+                <li>
+                  <Link to="/gate/login" className="hover:text-white transition-colors">
+                    Portal Staff Gate
+                  </Link>
+                </li>
               </ul>
             </div>
 
@@ -206,43 +223,35 @@ export const AppLayout: React.FC = () => {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navigasi bawah mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-3 h-16"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-4 h-16"
       >
-        <NavLink
-          to="/explore"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
+        <NavLink to="/explore" end className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+            home
+          </span>
+          <span>Beranda</span>
+        </NavLink>
+        <NavLink to="/jelajah" className={bottomNavClass}>
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             explore
           </span>
           <span>Jelajah</span>
         </NavLink>
-        <NavLink
-          to="/tiket"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
+        <NavLink to="/tiket" className={bottomNavClass}>
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             qr_code_2
           </span>
           <span>Tiket Saya</span>
         </NavLink>
-        <Link
-          to={isAuthenticated ? '/tiket' : '/login'}
-          className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold text-gray-500"
+        <NavLink
+          to={isAuthenticated ? '/akun' : '/login?redirect=/akun'}
+          className={bottomNavClass}
         >
           <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
             person
           </span>
-          <span>{isAuthenticated ? 'Akun' : 'Masuk'}</span>
-        </Link>
+          <span>Akun</span>
+        </NavLink>
       </nav>
     </div>
   );
