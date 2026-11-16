@@ -178,6 +178,11 @@ export const AppLayout: React.FC = () => {
                     Cek E-Ticket QRIS
                   </Link>
                 </li>
+                <li>
+                  <Link to="/gate/login" className="hover:text-white transition-colors">
+                    Portal Staff Gate
+                  </Link>
+                </li>
               </ul>
             </div>
 

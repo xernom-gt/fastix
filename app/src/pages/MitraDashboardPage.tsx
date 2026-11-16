@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { formatRupiah, type Destinasi, type TicketProduct } from '@pariwisloka/shared';
+import { Link, Navigate } from 'react-router-dom';
+import { formatRupiah, getTodayISO, type TicketProduct } from '@pariwisloka/shared';
+import { useAuth } from '../store/authStore';
+import { useBookings } from '../store/bookingStore';
 import {
-  loadMitraVenues,
   loadStaffAccounts,
-  saveMitraVenues,
   saveStaffAccounts,
   type StaffGateAccount,
 } from '../utils/operationsStorage';
@@ -14,9 +14,16 @@ function generateSixDigitPin(): string {
 }
 
 export default function MitraDashboardPage() {
-  const [venues, setVenues] = useState<Destinasi[]>(loadMitraVenues);
+  const { user, isAuthenticated } = useAuth();
+  const { venues, updateVenues, getExtraUsedQuota } = useBookings();
   const [staffs, setStaffs] = useState<StaffGateAccount[]>(loadStaffAccounts);
-  const [selectedVenueId, setSelectedVenueId] = useState<string>(venues[0]?.id ?? 'tirta-gangga');
+
+  const ownedVenues = useMemo(
+    () => venues.filter((v) => user?.ownedVenueIds?.includes(v.id)),
+    [venues, user?.ownedVenueIds],
+  );
+
+  const [selectedVenueId, setSelectedVenueId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'tickets' | 'staff'>('tickets');
 
   // Ticket edit & create state
@@ -36,8 +43,8 @@ export default function MitraDashboardPage() {
   const [staffFeedback, setStaffFeedback] = useState<string | null>(null);
 
   const activeVenue = useMemo(
-    () => venues.find((v) => v.id === selectedVenueId) ?? venues[0],
-    [venues, selectedVenueId],
+    () => ownedVenues.find((v) => v.id === selectedVenueId) ?? ownedVenues[0],
+    [ownedVenues, selectedVenueId],
   );
 
   const venueStaffs = useMemo(
@@ -45,15 +52,16 @@ export default function MitraDashboardPage() {
     [staffs, activeVenue],
   );
 
-  const updateVenues = (next: Destinasi[]) => {
-    setVenues(next);
-    saveMitraVenues(next);
-  };
-
   const updateStaffs = (next: StaffGateAccount[]) => {
     setStaffs(next);
     saveStaffAccounts(next);
   };
+
+  if (!isAuthenticated || user?.role !== 'OWNER') {
+    return <Navigate to="/login?redirect=/mitra" replace />;
+  }
+
+  const today = getTodayISO();
 
   const startEditTicket = (ticket: TicketProduct) => {
     setEditingTicketId(ticket.id);
@@ -196,7 +204,7 @@ export default function MitraDashboardPage() {
             }}
             className="h-10 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-[#111827] focus:border-[#111827] focus:outline-none"
           >
-            {venues.map((v) => (
+            {ownedVenues.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.venueCode} • {v.nama}
               </option>
@@ -276,10 +284,11 @@ export default function MitraDashboardPage() {
             )}
 
             {activeVenue.tickets.map((ticket) => {
-              const remaining = Math.max(
-                0,
-                ticket.dailyQuota - ticket.usedQuotaPaid - ticket.usedQuotaPending,
-              );
+              const usedTotal =
+                ticket.usedQuotaPaid +
+                ticket.usedQuotaPending +
+                getExtraUsedQuota(ticket.id, today);
+              const remaining = Math.max(0, ticket.dailyQuota - usedTotal);
               const isEditing = editingTicketId === ticket.id;
 
               return (
@@ -306,9 +315,7 @@ export default function MitraDashboardPage() {
                       </span>
                       <span>
                         Terpakai:{' '}
-                        <strong className="text-[#111827]">
-                          {ticket.usedQuotaPaid + ticket.usedQuotaPending}
-                        </strong>
+                        <strong className="text-[#111827]">{usedTotal}</strong>
                       </span>
                       <span>
                         Sisa: <strong className="text-[#111827]">{remaining}</strong>
