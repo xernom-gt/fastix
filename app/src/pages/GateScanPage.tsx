@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import type { ETicket } from '@pariwisloka/shared';
+import { getTodayISO } from '@pariwisloka/shared';
+import { useBookings } from '../store/bookingStore';
 import {
   loadGateSession,
-  loadGateTickets,
   loadOfflineQueue,
   saveGateSession,
-  saveGateTickets,
   saveOfflineQueue,
   type OfflineScanQueueItem,
 } from '../utils/operationsStorage';
@@ -25,11 +24,24 @@ function extractTicketCode(rawInput: string): string {
   return (parts[0] ?? '').trim().toUpperCase();
 }
 
+function formatScanTime(iso?: string): string {
+  if (!iso) return 'waktu tidak tercatat';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function GateScanPage() {
   const navigate = useNavigate();
   const staff = loadGateSession();
+  const { tickets, redeemTicket } = useBookings();
 
-  const [tickets, setTickets] = useState<ETicket[]>(loadGateTickets);
   const [offlineQueue, setOfflineQueue] = useState<OfflineScanQueueItem[]>(loadOfflineQueue);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [manualInput, setManualInput] = useState('');
@@ -114,12 +126,12 @@ export default function GateScanPage() {
       return;
     }
 
-    // Anti-double-scan: reject any ticket that has already been redeemed
+    // Anti-double-scan: reject any ticket that has already been redeemed and show first scan time
     if (target.status === 'REDEEMED') {
       setOutcome({
         accepted: false,
         headline: 'DITOLAK • Sudah Digunakan (Double-Scan)',
-        detail: `${target.holderName} (${target.ticketTitle}) sudah melakukan check-in sebelumnya.`,
+        detail: `${target.holderName} (${target.ticketTitle}) sudah check-in pada ${formatScanTime(target.redeemedAt)}.`,
         ticketCode: target.ticketCode,
       });
       return;
@@ -135,12 +147,19 @@ export default function GateScanPage() {
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    const updatedTickets = tickets.map((t) =>
-      t.id === target.id ? { ...t, status: 'REDEEMED' as const, redeemedAt: nowIso } : t,
-    );
-    setTickets(updatedTickets);
-    saveGateTickets(updatedTickets);
+    const today = getTodayISO();
+    if (target.bookingDate !== today) {
+      setOutcome({
+        accepted: false,
+        headline: 'DITOLAK • Tanggal Kunjungan Tidak Sesuai',
+        detail: `Tiket berlaku untuk ${target.bookingDate}, bukan kunjungan hari ini (${today}).`,
+        ticketCode: target.ticketCode,
+      });
+      return;
+    }
+
+    const redeemed = redeemTicket(target.ticketCode);
+    const nowIso = redeemed?.redeemedAt ?? new Date().toISOString();
 
     if (isOfflineMode) {
       const queuedItem: OfflineScanQueueItem = {
