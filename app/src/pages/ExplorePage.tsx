@@ -241,7 +241,7 @@ export default function ExplorePage() {
                       />
                       <div className="absolute inset-0 bg-gradient-to-r from-[#090D16]/95 via-[#111827]/75 to-transparent" />
 
-                      <div className="absolute inset-0 px-8 py-6 sm:px-12 sm:py-8 flex flex-col justify-between max-w-xl text-white">
+                      <div className="absolute inset-0 px-5 py-5 sm:px-12 sm:py-8 flex flex-col justify-between max-w-xl text-white">
                         <div className="flex items-center gap-2 text-xs font-bold text-gray-200">
                           <span className="px-2.5 py-0.5 rounded-full bg-white/15 border border-white/20">
                             Fastix Pilihan
@@ -279,12 +279,12 @@ export default function ExplorePage() {
                 </div>
               </div>
 
-              {/* Prev / Next Controls straddling outer card border */}
+              {/* Prev / Next Controls straddling outer card border on >= sm */}
               <button
                 type="button"
                 aria-label="Slide sebelumnya"
                 onClick={() => setBannerIndex((i) => (i - 1 + featuredSlides.length) % featuredSlides.length)}
-                className="absolute left-2 sm:-left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
+                className="hidden sm:flex absolute -left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                   chevron_left
@@ -294,7 +294,7 @@ export default function ExplorePage() {
                 type="button"
                 aria-label="Slide berikutnya"
                 onClick={() => setBannerIndex((i) => (i + 1) % featuredSlides.length)}
-                className="absolute right-2 sm:-right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
+                className="hidden sm:flex absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                   chevron_right
@@ -347,21 +347,45 @@ export default function ExplorePage() {
             )}
           </div>
 
-          {/* Dot Indicators */}
-          <div className="flex items-center justify-center gap-1.5 mt-4">
-            {featuredSlides.map((s, idx) => (
-              <button
-                key={s.id}
-                type="button"
-                aria-label={`Pilih slide ${idx + 1}`}
-                onClick={() => setBannerIndex(idx)}
-                className={`h-1.5 rounded-full transition-all ${
-                  idx === bannerIndex % featuredSlides.length
-                    ? 'w-6 bg-[#111827]'
-                    : 'w-1.5 bg-gray-300 hover:bg-gray-400'
-                }`}
-              />
-            ))}
+          {/* Dot Indicators & Mobile Prev/Next Controls */}
+          <div className="flex items-center justify-center gap-3 mt-4">
+            <button
+              type="button"
+              aria-label="Slide sebelumnya"
+              onClick={() => setBannerIndex((i) => (i - 1 + featuredSlides.length) % featuredSlides.length)}
+              className="sm:hidden w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-sm border border-gray-200 transition-all duration-200"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                chevron_left
+              </span>
+            </button>
+
+            <div className="flex items-center justify-center gap-1.5">
+              {featuredSlides.map((s, idx) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-label={`Pilih slide ${idx + 1}`}
+                  onClick={() => setBannerIndex(idx)}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === bannerIndex % featuredSlides.length
+                      ? 'w-6 bg-[#111827]'
+                      : 'w-1.5 bg-gray-300 hover:bg-gray-400'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <button
+              type="button"
+              aria-label="Slide berikutnya"
+              onClick={() => setBannerIndex((i) => (i + 1) % featuredSlides.length)}
+              className="sm:hidden w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-sm border border-gray-200 transition-all duration-200"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                chevron_right
+              </span>
+            </button>
           </div>
         </section>
       )}
