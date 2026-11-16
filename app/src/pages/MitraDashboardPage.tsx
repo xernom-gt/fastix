@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { formatRupiah, getTodayISO, type TicketProduct } from '@pariwisloka/shared';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
@@ -23,8 +23,15 @@ export default function MitraDashboardPage() {
     [venues, user?.ownedVenueIds],
   );
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedVenueId, setSelectedVenueId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'tickets' | 'staff'>('tickets');
+  const rawTab = searchParams.get('tab');
+  const activeTab: 'overview' | 'tickets' | 'staff' =
+    rawTab === 'overview' || rawTab === 'staff' ? rawTab : 'tickets';
+
+  const setActiveTab = (tab: 'overview' | 'tickets' | 'staff') => {
+    setSearchParams({ tab }, { replace: true });
+  };
 
   // Ticket edit & create state
   const [editingTicketId, setEditingTicketId] = useState<string | null>(null);
@@ -177,50 +184,33 @@ export default function MitraDashboardPage() {
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-semibold text-gray-500">
-            <Link to="/akun" className="hover:text-[#111827] inline-flex items-center gap-1">
-              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                arrow_back
-              </span>
-              <span>Akun Saya</span>
-            </Link>
-            <span>/</span>
-            <span className="text-[#111827] font-bold">Mode Owner Wisata</span>
-          </div>
+          <p className="text-xs font-semibold text-gray-500">Workspace Pengelola Destinasi</p>
           <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">
-            Kelola Destinasi &amp; Staff Gate
+            {activeTab === 'overview'
+              ? 'Ringkasan Kuota Hari Ini'
+              : activeTab === 'staff'
+                ? 'Akun & PIN Staff Gate'
+                : 'Kelola Tiket & Kuota Harian'}
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <select
-            aria-label="Pilih destinasi milik mitra"
-            value={activeVenue.id}
-            onChange={(e) => {
-              setSelectedVenueId(e.target.value);
-              setEditingTicketId(null);
-              setTicketFeedback(null);
-              setStaffFeedback(null);
-            }}
-            className="h-10 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-[#111827] focus:border-[#111827] focus:outline-none"
-          >
-            {ownedVenues.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.venueCode} • {v.nama}
-              </option>
-            ))}
-          </select>
-
-          <Link
-            to="/gate/login"
-            className="h-10 px-4 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-              qr_code_scanner
-            </span>
-            <span>Buka Mode Gate</span>
-          </Link>
-        </div>
+        <select
+          aria-label="Pilih destinasi milik mitra"
+          value={activeVenue.id}
+          onChange={(e) => {
+            setSelectedVenueId(e.target.value);
+            setEditingTicketId(null);
+            setTicketFeedback(null);
+            setStaffFeedback(null);
+          }}
+          className="h-10 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-[#111827] focus:border-[#111827] focus:outline-none"
+        >
+          {ownedVenues.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.venueCode} • {v.nama}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Ringkasan Destinasi Aktif */}
@@ -247,8 +237,8 @@ export default function MitraDashboardPage() {
         </div>
       </div>
 
-      {/* Switch Tab */}
-      <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+      {/* Switch Tab (Desktop quick tabs) */}
+      <div className="hidden md:flex items-center gap-2 border-b border-gray-200 pb-3">
         <button
           type="button"
           onClick={() => setActiveTab('tickets')}
@@ -271,9 +261,60 @@ export default function MitraDashboardPage() {
         >
           Akun &amp; PIN Staff Gate
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('overview')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+            activeTab === 'overview'
+              ? 'bg-[#111827] text-white'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          Ringkasan Kuota
+        </button>
       </div>
 
-      {activeTab === 'tickets' ? (
+      {activeTab === 'overview' ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {activeVenue.tickets.map((ticket) => {
+              const usedTotal =
+                ticket.usedQuotaPaid +
+                ticket.usedQuotaPending +
+                getExtraUsedQuota(ticket.id, today);
+              const remaining = Math.max(0, ticket.dailyQuota - usedTotal);
+              const ratio = Math.min(100, Math.round((usedTotal / Math.max(1, ticket.dailyQuota)) * 100));
+
+              return (
+                <div
+                  key={ticket.id}
+                  className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-[#111827]">{ticket.title}</h3>
+                      <p className="text-xs text-gray-500">{formatRupiah(ticket.price)}</p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-gray-100 text-[11px] font-extrabold text-[#111827]">
+                      Sisa {remaining}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className="h-full bg-[#111827] rounded-full transition-all"
+                      style={{ width: `${ratio}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-gray-500">
+                    <span>Terpakai: {usedTotal} tiket</span>
+                    <span>Kuota harian: {ticket.dailyQuota}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : activeTab === 'tickets' ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Daftar Tiket */}
           <div className="lg:col-span-2 space-y-3">
