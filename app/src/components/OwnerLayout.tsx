@@ -2,13 +2,27 @@ import React from 'react';
 import { Link, Navigate, Outlet, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 
-type OwnerTab = 'overview' | 'tickets' | 'staff';
+export type OwnerTab = 'tickets' | 'finance' | 'profile' | 'staff' | 'overview';
 
 const OWNER_NAV_ITEMS: Array<{ tab: OwnerTab; label: string; mobileLabel: string; icon: string }> = [
   { tab: 'tickets', label: 'Tiket & Kuota', mobileLabel: 'Tiket', icon: 'confirmation_number' },
+  { tab: 'finance', label: 'Keuangan & Payout', mobileLabel: 'Keuangan', icon: 'account_balance_wallet' },
+  { tab: 'profile', label: 'Profil Destinasi', mobileLabel: 'Profil', icon: 'edit_location_alt' },
   { tab: 'staff', label: 'Staff Gate & PIN', mobileLabel: 'Staff', icon: 'badge' },
   { tab: 'overview', label: 'Ringkasan Kuota', mobileLabel: 'Ringkasan', icon: 'analytics' },
 ];
+
+export function parseOwnerTab(rawTab: string | null): OwnerTab {
+  if (
+    rawTab === 'finance' ||
+    rawTab === 'profile' ||
+    rawTab === 'staff' ||
+    rawTab === 'overview'
+  ) {
+    return rawTab;
+  }
+  return 'tickets';
+}
 
 export const OwnerLayout: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
@@ -19,9 +33,7 @@ export const OwnerLayout: React.FC = () => {
     return <Navigate to="/login?redirect=/mitra" replace />;
   }
 
-  const rawTab = searchParams.get('tab');
-  const activeTab: OwnerTab =
-    rawTab === 'overview' || rawTab === 'staff' ? rawTab : 'tickets';
+  const activeTab = parseOwnerTab(searchParams.get('tab'));
 
   const selectTab = (tab: OwnerTab) => {
     setSearchParams({ tab }, { replace: true });
@@ -123,6 +135,16 @@ export const OwnerLayout: React.FC = () => {
 
         <div className="flex items-center gap-1.5 shrink-0">
           <Link
+            to="/gate/login"
+            aria-label="Buka Portal Staff Gate"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold text-white"
+          >
+            <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
+              qr_code_scanner
+            </span>
+            <span>Gate</span>
+          </Link>
+          <Link
             to="/explore"
             aria-label="Kembali ke Mode Wisatawan"
             className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold text-white"
@@ -147,7 +169,7 @@ export const OwnerLayout: React.FC = () => {
       {/* Mobile Owner Bottom Nav */}
       <nav
         aria-label="Navigasi Owner Mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-4 h-16"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-5 h-16"
       >
         {OWNER_NAV_ITEMS.map((item) => {
           const isActive = activeTab === item.tab;
@@ -156,26 +178,17 @@ export const OwnerLayout: React.FC = () => {
               key={item.tab}
               type="button"
               onClick={() => selectTab(item.tab)}
-              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+              className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] text-[10px] font-bold whitespace-nowrap transition-colors ${
                 isActive ? 'text-[#111827]' : 'text-gray-500'
               }`}
             >
-              <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
+              <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
                 {item.icon}
               </span>
               <span>{item.mobileLabel}</span>
             </button>
           );
         })}
-        <Link
-          to="/gate/login"
-          className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold whitespace-nowrap text-gray-500 hover:text-[#111827]"
-        >
-          <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
-            qr_code_scanner
-          </span>
-          <span>Portal Gate</span>
-        </Link>
       </nav>
     </div>
   );
