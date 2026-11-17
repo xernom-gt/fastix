@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { formatRupiah, getTodayISO, type TicketProduct } from '@pariwisloka/shared';
+import { formatRupiah, getTodayISO, type Destinasi, type TicketProduct } from '@pariwisloka/shared';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
 import {
@@ -13,6 +13,13 @@ function generateSixDigitPin(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+function getVenueTimezone(venue: Destinasi): 'WIB' | 'WITA' {
+  if (venue.kotaKode === 'bali' || /bali/i.test(venue.lokasi)) {
+    return 'WITA';
+  }
+  return 'WIB';
+}
+
 export default function MitraDashboardPage() {
   const { user, isAuthenticated } = useAuth();
   const { venues, updateVenues, getExtraUsedQuota } = useBookings();
@@ -23,15 +30,11 @@ export default function MitraDashboardPage() {
     [venues, user?.ownedVenueIds],
   );
 
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [selectedVenueId, setSelectedVenueId] = useState<string>('');
   const rawTab = searchParams.get('tab');
   const activeTab: 'overview' | 'tickets' | 'staff' =
     rawTab === 'overview' || rawTab === 'staff' ? rawTab : 'tickets';
-
-  const setActiveTab = (tab: 'overview' | 'tickets' | 'staff') => {
-    setSearchParams({ tab }, { replace: true });
-  };
 
   // Ticket edit & create state
   const [editingTicketId, setEditingTicketId] = useState<string | null>(null);
@@ -179,6 +182,8 @@ export default function MitraDashboardPage() {
     return null;
   }
 
+  const venueTimezone = getVenueTimezone(activeVenue);
+
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-12 space-y-6">
       {/* Header Bar */}
@@ -237,43 +242,6 @@ export default function MitraDashboardPage() {
         </div>
       </div>
 
-      {/* Switch Tab (Desktop quick tabs) */}
-      <div className="hidden md:flex items-center gap-2 border-b border-gray-200 pb-3">
-        <button
-          type="button"
-          onClick={() => setActiveTab('tickets')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
-            activeTab === 'tickets'
-              ? 'bg-[#111827] text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Tiket, Harga &amp; Kuota Harian
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('staff')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
-            activeTab === 'staff'
-              ? 'bg-[#111827] text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Akun &amp; PIN Staff Gate
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
-            activeTab === 'overview'
-              ? 'bg-[#111827] text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Ringkasan Kuota
-        </button>
-      </div>
-
       {activeTab === 'overview' ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -330,6 +298,10 @@ export default function MitraDashboardPage() {
                 ticket.usedQuotaPending +
                 getExtraUsedQuota(ticket.id, today);
               const remaining = Math.max(0, ticket.dailyQuota - usedTotal);
+              const occupancyPercent = Math.min(
+                100,
+                Math.round((usedTotal / Math.max(1, ticket.dailyQuota)) * 100),
+              );
               const isEditing = editingTicketId === ticket.id;
 
               return (
@@ -349,39 +321,69 @@ export default function MitraDashboardPage() {
                     </span>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-100 text-xs">
-                    <div className="flex flex-wrap items-center gap-3 text-gray-600">
-                      <span>
-                        Kuota Harian: <strong className="text-[#111827]">{ticket.dailyQuota}</strong>
-                      </span>
-                      <span>
-                        Terpakai:{' '}
-                        <strong className="text-[#111827]">{usedTotal}</strong>
-                      </span>
-                      <span>
-                        Sisa: <strong className="text-[#111827]">{remaining}</strong>
-                      </span>
+                  <div className="pt-3 border-t border-gray-100 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-3 text-gray-600">
+                        <span>
+                          Kuota Harian: <strong className="text-[#111827]">{ticket.dailyQuota}</strong>
+                        </span>
+                        <span>
+                          Terpakai:{' '}
+                          <strong className="text-[#111827]">{usedTotal}</strong>
+                        </span>
+                        <span>
+                          Sisa: <strong className="text-[#111827]">{remaining}</strong>
+                        </span>
+                      </div>
+
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => startEditTicket(ticket)}
+                          className="inline-flex items-center gap-1.5 min-h-[44px] sm:min-h-[36px] px-3.5 py-1.5 rounded-lg bg-gray-100 hover:bg-[#111827] text-[#111827] hover:text-white border border-gray-300 hover:border-[#111827] text-xs font-bold transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                            edit
+                          </span>
+                          <span>Ubah Harga / Kuota</span>
+                        </button>
+                      )}
                     </div>
 
-                    {!isEditing && (
-                      <button
-                        type="button"
-                        onClick={() => startEditTicket(ticket)}
-                        className="px-3.5 py-1.5 rounded-lg border border-gray-300 hover:border-[#111827] text-xs font-bold text-[#111827] transition-colors"
+                    <div className="space-y-1">
+                      <div
+                        role="progressbar"
+                        aria-label={`Okupansi kuota ${ticket.title}`}
+                        aria-valuenow={occupancyPercent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="w-full h-1.5 rounded-full bg-gray-100 overflow-hidden"
                       >
-                        Ubah Harga / Kuota
-                      </button>
-                    )}
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            occupancyPercent >= 85 ? 'bg-amber-600' : 'bg-[#111827]'
+                          }`}
+                          style={{ width: `${occupancyPercent}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px] font-medium text-gray-500">
+                        Okupansi hari ini: {occupancyPercent}% ({usedTotal}/{ticket.dailyQuota} tiket)
+                      </p>
+                    </div>
                   </div>
 
                   {isEditing && (
                     <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 space-y-3">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-bold text-gray-600">
+                          <label
+                            htmlFor={`edit-price-${ticket.id}`}
+                            className="block text-[11px] font-bold text-gray-600"
+                          >
                             Harga (Rp)
                           </label>
                           <input
+                            id={`edit-price-${ticket.id}`}
                             type="number"
                             min={0}
                             value={editPrice}
@@ -390,10 +392,14 @@ export default function MitraDashboardPage() {
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-bold text-gray-600">
+                          <label
+                            htmlFor={`edit-quota-${ticket.id}`}
+                            className="block text-[11px] font-bold text-gray-600"
+                          >
                             Kuota Harian
                           </label>
                           <input
+                            id={`edit-quota-${ticket.id}`}
                             type="number"
                             min={1}
                             value={editQuota}
@@ -455,7 +461,7 @@ export default function MitraDashboardPage() {
                   type="text"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="Akses pagi pukul 05.30 - 08.00 WIB"
+                  placeholder={`Akses pagi pukul 05.30 - 08.00 ${venueTimezone}`}
                   className="w-full h-10 px-3 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
                 />
               </div>
