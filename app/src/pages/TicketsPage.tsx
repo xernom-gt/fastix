@@ -1,10 +1,27 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { formatTanggalID, StatusBadge, type RedemptionStatus } from '@pariwisloka/shared';
-import { BookingStepper } from '../components/BookingStepper';
+import {
+  formatRupiah,
+  formatTanggalID,
+  type PaymentStatus,
+  type RedemptionStatus,
+} from '@pariwisloka/shared';
 import { QrMatrixSvg } from '../components/QrMatrixSvg';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
+
+const TICKET_STATUS_META: Record<RedemptionStatus, { label: string; className: string }> = {
+  VALID: { label: 'Siap Digunakan', className: 'bg-[#111827] text-white' },
+  REDEEMED: { label: 'Sudah Masuk', className: 'bg-gray-200 text-gray-700' },
+  EXPIRED: { label: 'Kedaluwarsa', className: 'bg-red-100 text-red-800' },
+};
+
+const TX_STATUS_META: Record<PaymentStatus, { label: string; className: string }> = {
+  PENDING: { label: 'Menunggu Pembayaran', className: 'bg-amber-100 text-amber-900' },
+  PAID: { label: 'Lunas', className: 'bg-emerald-100 text-emerald-900' },
+  EXPIRED: { label: 'Kedaluwarsa', className: 'bg-gray-200 text-gray-700' },
+  CANCELLED: { label: 'Dibatalkan', className: 'bg-red-100 text-red-800' },
+};
 
 export default function TicketsPage() {
   const { ticketCode } = useParams<{ ticketCode: string }>();
@@ -27,8 +44,21 @@ export default function TicketsPage() {
     });
   }, [tickets, query, statusFilter]);
 
+  const filteredTransactions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return transactions.filter((tx) => {
+      if (!q) return true;
+      return `${tx.invoiceNumber} ${tx.venueName}`.toLowerCase().includes(q);
+    });
+  }, [transactions, query]);
+
   if (!isAuthenticated) {
-    return <Navigate to={`/login?redirect=${encodeURIComponent(ticketCode ? `/tiket/${ticketCode}` : '/tiket')}`} replace />;
+    return (
+      <Navigate
+        to={`/login?redirect=${encodeURIComponent(ticketCode ? `/tiket/${ticketCode}` : '/tiket')}`}
+        replace
+      />
+    );
   }
 
   const activeTicket =
@@ -36,48 +66,57 @@ export default function TicketsPage() {
     filteredTickets[0] ??
     null;
 
-  const pendingTransactions = transactions.filter((t) => t.paymentStatus === 'PENDING');
+  const pendingTransactions = filteredTransactions.filter((t) => t.paymentStatus === 'PENDING');
+  const otherTransactions = filteredTransactions.filter((t) => t.paymentStatus !== 'PENDING');
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 space-y-6">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-12 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
-            Tiket &amp; Riwayat Transaksi
+            Pesanan Saya
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            Tunjukkan QR E-Ticket saat tiba di pintu gerbang destinasi wisata.
+            Kelola pesanan yang menunggu pembayaran serta tunjukkan kode QR tiket di pintu masuk.
           </p>
         </div>
         <Link
           to="/explore"
-          className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-gray-900 text-white text-sm font-bold"
+          className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors"
         >
           Pesan Tiket Baru
         </Link>
       </div>
 
-      {/* Pending QRIS Notice */}
+      {/* Pending Payment Section */}
       {pendingTransactions.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-2">
-          <p className="text-xs font-bold uppercase tracking-wider text-gray-600">
-            Menunggu Pembayaran QRIS ({pendingTransactions.length})
+        <section
+          aria-label="Menunggu pembayaran"
+          className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 space-y-3"
+        >
+          <p className="text-xs font-extrabold text-gray-900">
+            Menunggu Pembayaran ({pendingTransactions.length})
           </p>
-          <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {pendingTransactions.map((tx) => (
               <Link
                 key={tx.id}
                 to={`/checkout/${tx.id}`}
-                className="inline-flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 hover:bg-gray-100 text-xs font-bold text-gray-900"
+                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors"
               >
-                <span>
-                  {tx.venueName} · {tx.invoiceNumber}
+                <div className="min-w-0">
+                  <p className="text-xs font-extrabold text-gray-900 truncate">{tx.venueName}</p>
+                  <p className="text-[11px] text-gray-600 truncate">
+                    {formatTanggalID(tx.bookingDate)} · {formatRupiah(tx.totalAmount)}
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold shrink-0">
+                  Bayar QRIS
                 </span>
-                <StatusBadge module="payment" status={tx.paymentStatus} size="sm" />
               </Link>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Search & Filter */}
@@ -91,8 +130,8 @@ export default function TicketsPage() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cari kode tiket (PWL-TIX-...) atau nama wisata..."
-            className="w-full h-11 px-3.5 rounded-xl bg-gray-50 border border-gray-300 text-sm text-gray-900"
+            placeholder="Cari kode tiket atau nama tempat wisata..."
+            className="w-full h-11 px-3.5 rounded-xl bg-gray-50 border border-gray-300 text-sm text-gray-900 focus:border-gray-900 focus:outline-none"
           />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -101,19 +140,19 @@ export default function TicketsPage() {
               key={st}
               type="button"
               onClick={() => setStatusFilter(st)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border min-h-[40px] ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold border min-h-[40px] transition-colors ${
                 statusFilter === st
                   ? 'bg-gray-900 text-white border-gray-900'
                   : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
               }`}
             >
-              {st === 'ALL' ? 'Semua' : st}
+              {st === 'ALL' ? 'Semua Tiket' : TICKET_STATUS_META[st].label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Main Split: List + E-Pass Preview */}
+      {/* Main Split: Ticket List + QR Detail */}
       {filteredTickets.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-2xl p-10 text-center space-y-3">
           <h2 className="text-lg font-bold text-gray-900">Belum ada tiket yang cocok</h2>
@@ -127,6 +166,7 @@ export default function TicketsPage() {
           <div className="lg:col-span-5 space-y-3">
             {filteredTickets.map((t) => {
               const selected = activeTicket?.id === t.id;
+              const badge = TICKET_STATUS_META[t.status];
               return (
                 <button
                   key={t.id}
@@ -139,8 +179,12 @@ export default function TicketsPage() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold text-gray-900">{t.ticketCode}</span>
-                    <StatusBadge module="redemption" status={t.status} size="sm" />
+                    <span className="font-mono text-xs font-extrabold text-gray-900">
+                      {t.ticketCode}
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${badge.className}`}>
+                      {badge.label}
+                    </span>
                   </div>
                   <p className="text-sm font-bold text-gray-900">{t.venueName}</p>
                   <p className="text-xs text-gray-600">
@@ -151,39 +195,56 @@ export default function TicketsPage() {
             })}
           </div>
 
-          {/* Active E-Pass Detail */}
+          {/* Active Ticket Detail */}
           {activeTicket && (
-            <div className="lg:col-span-7 space-y-4">
-              <BookingStepper currentStep={3} />
+            <div className="lg:col-span-7">
               <div className="bg-white border border-gray-200 rounded-3xl overflow-hidden">
-                <div className="bg-gray-900 text-white p-6 space-y-4">
+                <div className="bg-gray-900 text-white p-6 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                        Fastix E-Pass · {activeTicket.venueCode}
+                      <span className="text-xs font-bold text-gray-300">
+                        Tiket Masuk Resmi Fastix
                       </span>
                       <h2 className="text-xl font-extrabold mt-0.5">{activeTicket.venueName}</h2>
                     </div>
-                    <StatusBadge module="redemption" status={activeTicket.status} size="sm" />
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        activeTicket.status === 'VALID'
+                          ? 'bg-white text-gray-900'
+                          : 'bg-white/15 text-gray-200'
+                      }`}
+                    >
+                      {TICKET_STATUS_META[activeTicket.status].label}
+                    </span>
                   </div>
                   <p className="text-xs text-gray-300">{activeTicket.venueAddress}</p>
                 </div>
 
                 <div className="p-6 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
                   <div>
-                    <span className="block text-[11px] font-bold uppercase text-gray-500">Tanggal Masuk</span>
-                    <span className="font-bold text-gray-900">{formatTanggalID(activeTicket.bookingDate)}</span>
+                    <span className="block text-[11px] font-bold uppercase text-gray-500">
+                      Tanggal Masuk
+                    </span>
+                    <span className="font-bold text-gray-900">
+                      {formatTanggalID(activeTicket.bookingDate)}
+                    </span>
                   </div>
                   <div>
-                    <span className="block text-[11px] font-bold uppercase text-gray-500">Jenis Tiket</span>
+                    <span className="block text-[11px] font-bold uppercase text-gray-500">
+                      Jenis Tiket
+                    </span>
                     <span className="font-bold text-gray-900">{activeTicket.ticketTitle}</span>
                   </div>
                   <div>
-                    <span className="block text-[11px] font-bold uppercase text-gray-500">Pemegang</span>
+                    <span className="block text-[11px] font-bold uppercase text-gray-500">
+                      Pemegang
+                    </span>
                     <span className="font-bold text-gray-900">{activeTicket.holderName}</span>
                   </div>
                   <div className="col-span-2 sm:col-span-3">
-                    <span className="block text-[11px] font-bold uppercase text-gray-500">Nomor Invoice</span>
+                    <span className="block text-[11px] font-bold uppercase text-gray-500">
+                      Nomor Invoice
+                    </span>
                     <span className="font-semibold text-gray-800">{activeTicket.invoiceNumber}</span>
                   </div>
                 </div>
@@ -201,13 +262,12 @@ export default function TicketsPage() {
                     <QrMatrixSvg value={activeTicket.qrPayload} size={140} />
                   </div>
                   <div className="space-y-2 text-center sm:text-left min-w-0">
-                    <p className="text-base font-extrabold text-gray-900">{activeTicket.ticketCode}</p>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      Tunjukkan kode QR ini ke petugas Fastix Gate saat tiba di lokasi. Setiap tiket
-                      hanya berlaku untuk 1 kali pemindaian.
+                    <p className="font-mono text-base font-extrabold text-gray-900">
+                      {activeTicket.ticketCode}
                     </p>
-                    <p className="text-[11px] font-mono text-gray-500 break-all">
-                      HMAC Payload: {activeTicket.qrPayload}
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Tunjukkan kode QR ini ke petugas loket saat tiba di lokasi. Setiap tiket
+                      hanya berlaku untuk 1 kali masuk.
                     </p>
                   </div>
                 </div>
@@ -215,6 +275,43 @@ export default function TicketsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Riwayat Transaksi Lainnya (Lunas / Dibatalkan / Kedaluwarsa) */}
+      {otherTransactions.length > 0 && (
+        <section aria-label="Riwayat transaksi" className="space-y-3 pt-2">
+          <h2 className="text-base font-extrabold text-gray-900">Riwayat Transaksi</h2>
+          <div className="bg-white border border-gray-200 rounded-2xl divide-y divide-gray-100">
+            {otherTransactions.map((tx) => {
+              const meta = TX_STATUS_META[tx.paymentStatus];
+              return (
+                <div
+                  key={tx.id}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{tx.venueName}</p>
+                    <p className="text-xs text-gray-600">
+                      {tx.invoiceNumber} · {formatTanggalID(tx.bookingDate)} ·{' '}
+                      {formatRupiah(tx.totalAmount)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${meta.className}`}>
+                      {meta.label}
+                    </span>
+                    <Link
+                      to={`/checkout/${tx.id}`}
+                      className="text-xs font-bold text-gray-700 hover:text-gray-900 underline"
+                    >
+                      Detail
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );
