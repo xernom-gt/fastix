@@ -1,12 +1,11 @@
 import React from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 
 const LANDING_URL = import.meta.env.VITE_LANDING_URL ?? 'http://localhost:5173';
 
 export const AppLayout: React.FC = () => {
-  const { user, isAuthenticated, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
 
   const navClass = ({ isActive }: { isActive: boolean }) =>
     `px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
@@ -68,45 +67,22 @@ export const AppLayout: React.FC = () => {
             </NavLink>
           </nav>
 
-          <div className="flex items-center justify-end gap-2 md:justify-self-end">
-            <button
-              type="button"
-              aria-label="Cari destinasi"
-              onClick={() => navigate('/jelajah')}
-              className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                search
-              </span>
-            </button>
-
+          <div className="flex items-center justify-end md:justify-self-end">
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/akun"
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-xl border border-white/15 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    person
-                  </span>
-                  <span className="hidden sm:inline">{user.fullName}</span>
-                  <span className="sm:hidden">Akun</span>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    logout();
-                    navigate('/explore');
-                  }}
-                  className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors"
-                >
-                  Keluar
-                </button>
-              </div>
+              <Link
+                to="/akun"
+                className="inline-flex items-center gap-2 text-xs font-bold text-white bg-white/15 hover:bg-white/25 px-3.5 py-2 rounded-xl border border-white/15 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                  person
+                </span>
+                <span className="hidden sm:inline">{user.fullName}</span>
+                <span className="sm:hidden">Akun</span>
+              </Link>
             ) : (
               <Link
                 to="/login"
-                className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold transition-colors"
+                className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold transition-colors"
               >
                 Masuk
               </Link>

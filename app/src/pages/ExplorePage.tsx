@@ -148,6 +148,21 @@ export default function ExplorePage() {
   }, [publishedVenues, keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
 
   const featuredSlides = useMemo(() => publishedVenues.slice(0, 4), [publishedVenues]);
+  const [isCarouselPaused, setIsCarouselPaused] = useState(false);
+
+  useEffect(() => {
+    if (isCarouselPaused || featuredSlides.length <= 1) return;
+
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mediaQuery.matches) return;
+
+    const timer = window.setInterval(() => {
+      setBannerIndex((prev) => (prev + 1) % featuredSlides.length);
+    }, 4500);
+
+    return () => window.clearInterval(timer);
+  }, [isCarouselPaused, featuredSlides.length]);
+
   const activeSlide = featuredSlides[bannerIndex % featuredSlides.length];
   const prevSlide = featuredSlides[(bannerIndex - 1 + featuredSlides.length) % featuredSlides.length];
   const prev2Slide = featuredSlides[(bannerIndex - 2 + featuredSlides.length) % featuredSlides.length];
@@ -173,7 +188,16 @@ export default function ExplorePage() {
     <div className="space-y-12 pt-6 sm:pt-8 pb-6">
       {/* 1. Centered Hero Showcase Banner (2-Layer Stacked Peek Deck, Fastix Monochrome Theme) */}
       {activeSlide && (
-        <section aria-label="Destinasi unggulan" className="max-w-7xl mx-auto px-4 sm:px-6">
+        <section
+          aria-label="Destinasi unggulan"
+          className="max-w-7xl mx-auto px-4 sm:px-6"
+          onMouseEnter={() => setIsCarouselPaused(true)}
+          onMouseLeave={() => setIsCarouselPaused(false)}
+          onTouchStart={() => setIsCarouselPaused(true)}
+          onTouchEnd={() => setIsCarouselPaused(false)}
+          onFocusCapture={() => setIsCarouselPaused(true)}
+          onBlurCapture={() => setIsCarouselPaused(false)}
+        >
           <div className="relative flex items-center justify-center">
             {/* Left Outer Peek Card (Layer 2) */}
             {prev2Slide && (

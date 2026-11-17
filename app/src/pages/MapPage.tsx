@@ -31,21 +31,26 @@ const DEFAULT_ORIGIN: Coordinates = {
 
 function createPinIcon(active: boolean, label: string): L.DivIcon {
   return L.divIcon({
-    className: '',
-    html: `<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:9999px;background:${
-      active ? '#111827' : '#ffffff'
-    };color:${active ? '#ffffff' : '#111827'};border:1.5px solid #111827;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.18);transform:translate(-50%,-50%);">${label}</div>`,
-    iconSize: [0, 0],
-    iconAnchor: [0, 0],
+    className: '!bg-transparent !border-0 !w-auto !h-auto',
+    html: `<div class="w-max whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-md border text-[11px] font-bold select-none cursor-pointer transition-transform ${
+      active
+        ? 'bg-[#111827] text-white border-[#111827]'
+        : 'bg-white text-[#111827] border-gray-300 hover:border-gray-900'
+    }" style="transform:translate(-50%,-50%);">
+      <span style="width:6px;height:6px;border-radius:9999px;background:${active ? '#34d399' : '#9ca3af'};flex-shrink:0;"></span>
+      <span>${label}</span>
+    </div>`,
+    iconSize: undefined,
+    iconAnchor: undefined,
   });
 }
 
 function createOriginIcon(): L.DivIcon {
   return L.divIcon({
-    className: '',
+    className: '!bg-transparent !border-0 !w-auto !h-auto',
     html: '<div style="width:14px;height:14px;border-radius:9999px;background:#2563eb;border:2.5px solid #ffffff;box-shadow:0 0 0 3px rgba(37,99,235,0.28);transform:translate(-50%,-50%);"></div>',
-    iconSize: [0, 0],
-    iconAnchor: [0, 0],
+    iconSize: undefined,
+    iconAnchor: undefined,
   });
 }
 
