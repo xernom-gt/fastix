@@ -13,12 +13,17 @@ import { useBookings } from '../store/bookingStore';
 const TICKET_STATUS_META: Record<RedemptionStatus, { label: string; className: string }> = {
   VALID: { label: 'Siap Digunakan', className: 'bg-[#111827] text-white' },
   REDEEMED: { label: 'Sudah Masuk', className: 'bg-gray-200 text-gray-700' },
+  REFUNDED: {
+    label: 'DANA DIKEMBALIKAN · Tidak Digunakan > 7 Hari',
+    className: 'bg-blue-100 text-blue-900 border border-blue-200',
+  },
   EXPIRED: { label: 'Kedaluwarsa', className: 'bg-red-100 text-red-800' },
 };
 
 const TX_STATUS_META: Record<PaymentStatus, { label: string; className: string }> = {
   PENDING: { label: 'Menunggu Pembayaran', className: 'bg-amber-100 text-amber-900' },
   PAID: { label: 'Lunas', className: 'bg-emerald-100 text-emerald-900' },
+  REFUNDED: { label: 'Dana Dikembalikan', className: 'bg-blue-100 text-blue-900' },
   EXPIRED: { label: 'Kedaluwarsa', className: 'bg-gray-200 text-gray-700' },
   CANCELLED: { label: 'Dibatalkan', className: 'bg-red-100 text-red-800' },
 };
@@ -135,7 +140,7 @@ export default function TicketsPage() {
           />
         </div>
         <div className="flex flex-wrap gap-2">
-          {(['ALL', 'VALID', 'REDEEMED', 'EXPIRED'] as const).map((st) => (
+          {(['ALL', 'VALID', 'REDEEMED', 'REFUNDED', 'EXPIRED'] as const).map((st) => (
             <button
               key={st}
               type="button"
@@ -146,7 +151,11 @@ export default function TicketsPage() {
                   : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
               }`}
             >
-              {st === 'ALL' ? 'Semua Tiket' : TICKET_STATUS_META[st].label}
+              {st === 'ALL'
+                ? 'Semua Tiket'
+                : st === 'REFUNDED'
+                  ? 'Dana Dikembalikan'
+                  : TICKET_STATUS_META[st].label}
             </button>
           ))}
         </div>
@@ -211,7 +220,9 @@ export default function TicketsPage() {
                       className={`px-3 py-1 rounded-full text-xs font-bold ${
                         activeTicket.status === 'VALID'
                           ? 'bg-white text-gray-900'
-                          : 'bg-white/15 text-gray-200'
+                          : activeTicket.status === 'REFUNDED'
+                            ? 'bg-blue-100 text-blue-900'
+                            : 'bg-white/15 text-gray-200'
                       }`}
                     >
                       {TICKET_STATUS_META[activeTicket.status].label}
@@ -258,17 +269,38 @@ export default function TicketsPage() {
 
                 {/* QR Stub */}
                 <div className="p-6 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row items-center gap-6">
-                  <div className="p-3 bg-white rounded-2xl border border-gray-300 shrink-0">
+                  <div className="p-3 bg-white rounded-2xl border border-gray-300 shrink-0 relative">
                     <QrMatrixSvg value={activeTicket.qrPayload} size={140} />
+                    {activeTicket.status === 'REFUNDED' && (
+                      <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] rounded-2xl flex flex-col items-center justify-center p-2 text-center">
+                        <span className="material-symbols-outlined text-[28px] text-blue-800" aria-hidden="true">
+                          currency_exchange
+                        </span>
+                        <span className="text-[11px] font-extrabold text-blue-900 mt-1">
+                          REFUNDED
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2 text-center sm:text-left min-w-0">
                     <p className="font-mono text-base font-extrabold text-gray-900">
                       {activeTicket.ticketCode}
                     </p>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      Tunjukkan kode QR ini ke petugas loket saat tiba di lokasi. Setiap tiket
-                      hanya berlaku untuk 1 kali masuk.
-                    </p>
+                    {activeTicket.status === 'REFUNDED' ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-blue-900">
+                          Dana Dikembalikan Otomatis
+                        </p>
+                        <p className="text-xs text-gray-600 leading-relaxed">
+                          Tiket tidak digunakan dalam kurun waktu 7 hari sejak tanggal kunjungan ({formatTanggalID(activeTicket.bookingDate)}). Sesuai kebijakan Fastix, dana pemesanan telah dikembalikan ke metode pembayaran awal.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Tunjukkan kode QR ini ke petugas loket saat tiba di lokasi. Setiap tiket
+                        hanya berlaku untuk 1 kali masuk.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

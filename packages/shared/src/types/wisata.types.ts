@@ -7,8 +7,8 @@ export type KategoriWisata =
   | 'theme_waterpark';
 
 export type KybStatus = 'NOT_SUBMITTED' | 'PENDING' | 'APPROVED' | 'REJECTED';
-export type PaymentStatus = 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
-export type RedemptionStatus = 'VALID' | 'REDEEMED' | 'EXPIRED';
+export type PaymentStatus = 'PENDING' | 'PAID' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED';
+export type RedemptionStatus = 'VALID' | 'REDEEMED' | 'REFUNDED' | 'EXPIRED';
 export type PayoutStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED';
 
 export interface TicketProduct {

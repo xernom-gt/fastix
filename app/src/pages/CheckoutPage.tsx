@@ -15,6 +15,10 @@ const PAYMENT_STATUS_LABEL: Record<PaymentStatus, { text: string; className: str
     text: 'Pembayaran Lunas',
     className: 'bg-emerald-100 text-emerald-900',
   },
+  REFUNDED: {
+    text: 'Dana Dikembalikan',
+    className: 'bg-blue-100 text-blue-900',
+  },
   EXPIRED: {
     text: 'Waktu Habis',
     className: 'bg-gray-200 text-gray-700',
