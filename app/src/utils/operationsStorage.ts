@@ -28,7 +28,9 @@ export type BalanceMutationType =
   | 'PAYIN_INFLOW'
   | 'HOLDING_RELEASED'
   | 'PAYOUT_WITHDRAW'
-  | 'PAYOUT_REFUND';
+  | 'PAYOUT_REFUND'
+  | 'UNCHECKED_HOLDING'
+  | 'REFUND_AUTO';
 
 export interface BalanceMutation {
   id: string;
@@ -88,7 +90,7 @@ const DEFAULT_MUTATIONS: BalanceMutation[] = [
     amount: 2450000,
     grossAmount: 2625000,
     platformFee: 175000,
-    description: 'Rilis escrow H+1 kunjungan 15 Nov (70 tiket terjual)',
+    description: 'Rilis escrow H+1 tiket check-in 15 Nov (70 tiket redeemed)',
     createdAt: '2026-11-16T23:59:00+07:00',
   },
   {
@@ -106,7 +108,7 @@ const DEFAULT_MUTATIONS: BalanceMutation[] = [
     amount: 945000,
     grossAmount: 1020000,
     platformFee: 75000,
-    description: 'Penjualan tiket harian (masa tahan H+1)',
+    description: 'Tiket berhasil check-in di gate (masa tahan H+1)',
     createdAt: '2026-11-17T07:45:00+07:00',
   },
   {
@@ -116,8 +118,18 @@ const DEFAULT_MUTATIONS: BalanceMutation[] = [
     amount: 3800000,
     grossAmount: 4000000,
     platformFee: 200000,
-    description: 'Rilis escrow H+1 kunjungan 15 Nov (80 tiket terjual)',
+    description: 'Rilis escrow H+1 tiket check-in 15 Nov (80 tiket redeemed)',
     createdAt: '2026-11-16T23:59:00+07:00',
+  },
+  {
+    id: 'mut_seed_05',
+    venueId: 'tirta-gangga',
+    type: 'REFUND_AUTO',
+    amount: 0,
+    grossAmount: 37500,
+    platformFee: 0,
+    description: 'Tiket PWL-TIX-7D2E9F10 - Tiket Kadaluarsa & Di-refund Otomatis',
+    createdAt: '2026-11-15T00:01:00+07:00',
   },
 ];
 
@@ -210,7 +222,21 @@ export function getVerifiedBankAccount(venueId: string): BankAccountKYB {
 }
 
 export function loadBalanceMutations(): BalanceMutation[] {
-  return readJson<BalanceMutation[]>(MUTATIONS_STORAGE_KEY, DEFAULT_MUTATIONS);
+  const list = readJson<BalanceMutation[]>(MUTATIONS_STORAGE_KEY, DEFAULT_MUTATIONS);
+  if (!list.some((m) => m.type === 'REFUND_AUTO')) {
+    const refundSeed: BalanceMutation = {
+      id: 'mut_seed_05',
+      venueId: 'tirta-gangga',
+      type: 'REFUND_AUTO',
+      amount: 0,
+      grossAmount: 37500,
+      platformFee: 0,
+      description: 'Tiket PWL-TIX-7D2E9F10 - Tiket Kadaluarsa & Di-refund Otomatis',
+      createdAt: '2026-11-15T00:01:00+07:00',
+    };
+    return [...list, refundSeed];
+  }
+  return list;
 }
 
 export function saveBalanceMutations(mutations: BalanceMutation[]): void {

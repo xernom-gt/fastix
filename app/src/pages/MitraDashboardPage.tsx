@@ -44,10 +44,12 @@ function formatShortDateTime(iso: string): string {
 }
 
 const MUTATION_META: Record<BalanceMutationType, { label: string; badgeClass: string }> = {
-  PAYIN_INFLOW: { label: 'Masuk Penjualan', badgeClass: 'bg-gray-100 text-gray-800' },
+  PAYIN_INFLOW: { label: 'Check-in Gate (H+1)', badgeClass: 'bg-amber-50 text-amber-800' },
   HOLDING_RELEASED: { label: 'Rilis Escrow H+1', badgeClass: 'bg-emerald-50 text-emerald-800' },
-  PAYOUT_WITHDRAW: { label: 'Penarikan Dana', badgeClass: 'bg-amber-50 text-amber-800' },
+  PAYOUT_WITHDRAW: { label: 'Penarikan Dana', badgeClass: 'bg-gray-100 text-gray-800' },
   PAYOUT_REFUND: { label: 'Pengembalian Gagal', badgeClass: 'bg-blue-50 text-blue-800' },
+  UNCHECKED_HOLDING: { label: 'Belum Check-in', badgeClass: 'bg-indigo-50 text-indigo-800' },
+  REFUND_AUTO: { label: 'Refund Otomatis', badgeClass: 'bg-rose-50 text-rose-800' },
 };
 
 const PAYOUT_STATUS_META: Record<PayoutStatus, { label: string; badgeClass: string }> = {
@@ -66,7 +68,7 @@ const TAB_HEADINGS: Record<OwnerTab, string> = {
 
 export default function MitraDashboardPage() {
   const { user, isAuthenticated } = useAuth();
-  const { venues, updateVenues, getExtraUsedQuota, transactions } = useBookings();
+  const { venues, updateVenues, getExtraUsedQuota, transactions, tickets } = useBookings();
   const [staffs, setStaffs] = useState<StaffGateAccount[]>(loadStaffAccounts);
   const [mutations, setMutations] = useState<BalanceMutation[]>(loadBalanceMutations);
   const [payouts, setPayouts] = useState<PayoutRecord[]>(loadPayoutHistory);
@@ -146,19 +148,19 @@ export default function MitraDashboardPage() {
         platformFee: 0,
         pendingBalance: 0,
         availableBalance: 0,
+        holdingUncheckedBalance: 0,
         ledgerRows: [] as BalanceMutation[],
       };
     }
 
     const venueMutations = mutations.filter((m) => m.venueId === activeVenue.id);
-    const livePaidTxs = transactions.filter(
-      (tx) => tx.venueId === activeVenue.id && tx.paymentStatus === 'PAID',
-    );
+    const venueTickets = tickets.filter((tk) => tk.venueId === activeVenue.id);
 
     let grossRevenue = 0;
     let platformFee = 0;
     let pendingBalance = 0;
     let availableBalance = 0;
+    let holdingUncheckedBalance = 0;
 
     for (const mut of venueMutations) {
       if (mut.type === 'PAYIN_INFLOW') {
@@ -171,32 +173,96 @@ export default function MitraDashboardPage() {
         availableBalance += mut.amount;
       } else if (mut.type === 'PAYOUT_WITHDRAW' || mut.type === 'PAYOUT_REFUND') {
         availableBalance += mut.amount;
+      } else if (mut.type === 'UNCHECKED_HOLDING') {
+        grossRevenue += mut.grossAmount ?? mut.amount;
+        platformFee += mut.platformFee ?? 0;
+        holdingUncheckedBalance += mut.amount;
+      } else if (mut.type === 'REFUND_AUTO') {
+        grossRevenue += mut.grossAmount ?? 0;
       }
     }
 
-    const liveMutations: BalanceMutation[] = livePaidTxs.map((tx) => {
-      const netRevenueOwner = Math.max(0, tx.totalAmount - tx.platformFee);
-      grossRevenue += tx.totalAmount;
-      platformFee += tx.platformFee;
-      const bookingDate = tx.bookingDate || tx.items[0]?.bookingDate || today;
-      const isReleased = bookingDate < today;
-      if (isReleased) {
-        availableBalance += netRevenueOwner;
-      } else {
-        pendingBalance += netRevenueOwner;
-      }
+    const liveMutations: BalanceMutation[] = [];
 
-      return {
-        id: `live_${tx.id}`,
-        venueId: tx.venueId,
-        type: isReleased ? 'HOLDING_RELEASED' : 'PAYIN_INFLOW',
-        amount: netRevenueOwner,
-        grossAmount: tx.totalAmount,
-        platformFee: tx.platformFee,
-        description: `Transaksi ${tx.invoiceNumber} (${tx.items[0]?.ticketTitle ?? 'Tiket'})`,
-        createdAt: tx.paidAt ?? tx.createdAt,
-      };
-    });
+    for (const tk of venueTickets) {
+      const tx = transactions.find((t) => t.invoiceNumber === tk.invoiceNumber);
+      const matchingProduct = activeVenue.tickets.find((tp) => tp.title === tk.ticketTitle);
+      const ticketPrice =
+        tx?.items.find((i) => i.ticketTitle === tk.ticketTitle)?.unitPrice ??
+        matchingProduct?.price ??
+        35000;
+      const totalTxTickets = tx?.items.reduce((sum, i) => sum + i.quantity, 0) || 1;
+      const ticketFee = tx ? Math.round(tx.platformFee / totalTxTickets) : 2500;
+      const ticketGross = ticketPrice + ticketFee;
+      const ticketNet = ticketPrice;
+
+      grossRevenue += ticketGross;
+      platformFee += ticketFee;
+
+      const isRefunded =
+        (tk.status as string) === 'REFUNDED' || (tx?.paymentStatus as string) === 'REFUNDED';
+      const isRedeemed = tk.status === 'REDEEMED';
+      const isValid = tk.status === 'VALID';
+
+      if (isRefunded) {
+        // Tiket yang berstatus 'REFUNDED' (tidak dipakai > 7 hari) bernilai Rp 0 bagi Owner
+        liveMutations.push({
+          id: `live_rf_${tk.id}`,
+          venueId: tk.venueId,
+          type: 'REFUND_AUTO',
+          amount: 0,
+          grossAmount: ticketGross,
+          platformFee: 0,
+          description: `Tiket ${tk.ticketCode} (${tk.ticketTitle}) - Tiket Kadaluarsa & Di-refund Otomatis`,
+          createdAt: tk.paidAt || new Date().toISOString(),
+        });
+      } else if (isRedeemed) {
+        // Saldo Owner (pendingBalance & availableBalance) HANYA bersumber dari tiket yang sudah berstatus 'REDEEMED'
+        // Rilis saldo H+1 hanya berlaku untuk tiket yang telah REDEEMED
+        const checkInDate = tk.redeemedAt ? tk.redeemedAt.slice(0, 10) : tk.bookingDate;
+        const isReleased = checkInDate < today;
+
+        if (isReleased) {
+          availableBalance += ticketNet;
+          liveMutations.push({
+            id: `live_rel_${tk.id}`,
+            venueId: tk.venueId,
+            type: 'HOLDING_RELEASED',
+            amount: ticketNet,
+            grossAmount: ticketGross,
+            platformFee: ticketFee,
+            description: `Rilis escrow H+1 tiket check-in ${tk.ticketCode} (${tk.ticketTitle})`,
+            createdAt: tk.redeemedAt ?? tk.paidAt,
+          });
+        } else {
+          pendingBalance += ticketNet;
+          liveMutations.push({
+            id: `live_in_${tk.id}`,
+            venueId: tk.venueId,
+            type: 'PAYIN_INFLOW',
+            amount: ticketNet,
+            grossAmount: ticketGross,
+            platformFee: ticketFee,
+            description: `Tiket check-in di gate ${tk.ticketCode} (${tk.ticketTitle}) - Masa tahan H+1`,
+            createdAt: tk.redeemedAt ?? tk.paidAt,
+          });
+        }
+      } else if (isValid) {
+        // Tiket yang masih 'VALID' (belum dipindai di loket) TIDAK BOLEH masuk ke pendingBalance/availableBalance Owner
+        // melainkan ditampilkan di ringkasan terpisah: "Dana Tiket Belum Check-in (Holding Platform)"
+        holdingUncheckedBalance += ticketNet;
+        liveMutations.push({
+          id: `live_val_${tk.id}`,
+          venueId: tk.venueId,
+          type: 'UNCHECKED_HOLDING',
+          amount: 0,
+          grossAmount: ticketGross,
+          platformFee: ticketFee,
+          description: `Tiket ${tk.ticketCode} (${tk.ticketTitle}) - Menunggu check-in di loket gate`,
+          createdAt: tk.paidAt,
+        });
+      }
+    }
 
     const ledgerRows = [...liveMutations, ...venueMutations].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -207,9 +273,10 @@ export default function MitraDashboardPage() {
       platformFee,
       pendingBalance: Math.max(0, pendingBalance),
       availableBalance: Math.max(0, availableBalance),
+      holdingUncheckedBalance: Math.max(0, holdingUncheckedBalance),
       ledgerRows,
     };
-  }, [activeVenue, mutations, transactions, today]);
+  }, [activeVenue, mutations, tickets, transactions, today]);
 
   const venuePayouts = useMemo(
     () =>
@@ -504,7 +571,7 @@ export default function MitraDashboardPage() {
       {activeTab === 'finance' ? (
         <div className="space-y-6">
           {/* Ringkasan Saldo & Escrow H+1 */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
             <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-1">
               <p className="text-[11px] font-semibold text-gray-500">Omzet Kotor</p>
               <p className="text-base sm:text-lg font-extrabold text-[#111827] tabular-nums">
@@ -521,21 +588,38 @@ export default function MitraDashboardPage() {
               <p className="text-[11px] text-gray-500">Potongan layanan per tiket</p>
             </div>
 
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-1">
+              <p className="text-[11px] font-bold text-indigo-900">Dana Belum Check-in</p>
+              <p className="text-base sm:text-lg font-extrabold text-[#111827] tabular-nums">
+                {formatRupiah(financeSummary.holdingUncheckedBalance)}
+              </p>
+              <p className="text-[11px] text-indigo-700">Holding Platform (tiket VALID)</p>
+            </div>
+
             <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 space-y-1">
-              <p className="text-[11px] font-semibold text-amber-800">Saldo Tertahan (H+1)</p>
+              <p className="text-[11px] font-bold text-amber-800">Saldo Tertahan (H+1)</p>
               <p className="text-base sm:text-lg font-extrabold text-[#111827] tabular-nums">
                 {formatRupiah(financeSummary.pendingBalance)}
               </p>
-              <p className="text-[11px] text-amber-800">Rilis H+1 pukul 23:59 WIB</p>
+              <p className="text-[11px] text-amber-800">Tiket REDEEMED (rilis H+1)</p>
             </div>
 
-            <div className="rounded-2xl border border-[#111827] bg-[#111827] text-white p-4 space-y-1">
+            <div className="rounded-2xl border border-[#111827] bg-[#111827] text-white p-4 space-y-1 col-span-2 md:col-span-1">
               <p className="text-[11px] font-semibold text-gray-300">Saldo Siap Tarik</p>
               <p className="text-base sm:text-lg font-extrabold tabular-nums">
                 {formatRupiah(financeSummary.availableBalance)}
               </p>
               <p className="text-[11px] text-gray-300">Siap cair ke rekening KYB</p>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-3.5 flex items-start gap-2.5 text-xs text-gray-600">
+            <span className="material-symbols-outlined text-[18px] text-gray-700 shrink-0 mt-0.5" aria-hidden="true">
+              verified_user
+            </span>
+            <p className="leading-relaxed">
+              <strong className="text-[#111827]">Aturan Escrow Fastix:</strong> Saldo Owner (Saldo Tertahan &amp; Siap Tarik) hanya bersumber dari tiket yang telah dipindai di loket gate (<strong>REDEEMED</strong>). Tiket yang masih <strong>VALID</strong> berada di holding platform, sedangkan tiket yang tidak dipakai melewati 7 hari di-refund otomatis (Rp 0 bagi Owner).
+            </p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -557,7 +641,8 @@ export default function MitraDashboardPage() {
                   <div className="divide-y divide-gray-100">
                     {financeSummary.ledgerRows.map((row) => {
                       const meta = MUTATION_META[row.type];
-                      const isPositive = row.amount >= 0;
+                      const isPositive = row.amount > 0;
+                      const isZero = row.amount === 0;
                       return (
                         <div
                           key={row.id}
@@ -581,10 +666,18 @@ export default function MitraDashboardPage() {
 
                           <span
                             className={`text-xs sm:text-sm font-extrabold tabular-nums whitespace-nowrap ${
-                              isPositive ? 'text-emerald-700' : 'text-[#111827]'
+                              isPositive
+                                ? 'text-emerald-700'
+                                : isZero
+                                  ? 'text-gray-500'
+                                  : 'text-[#111827]'
                             }`}
                           >
-                            {isPositive ? `+${formatRupiah(row.amount)}` : formatRupiah(row.amount)}
+                            {isPositive
+                              ? `+${formatRupiah(row.amount)}`
+                              : isZero
+                                ? 'Rp 0'
+                                : formatRupiah(row.amount)}
                           </span>
                         </div>
                       );
