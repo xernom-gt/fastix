@@ -95,7 +95,7 @@ export default function AccountPage() {
           </span>
         </Link>
 
-        {user.role === 'OWNER' && (
+        {user.role === 'OWNER' ? (
           <Link
             to="/mitra"
             className="flex items-center justify-between gap-4 p-4 sm:px-6 hover:bg-gray-50 transition-colors"
@@ -109,6 +109,26 @@ export default function AccountPage() {
               <div>
                 <p className="text-sm font-bold text-[#111827]">Mode Owner Wisata</p>
                 <p className="text-xs text-gray-500">Kelola tiket, kuota harian, &amp; PIN Staff Gate</p>
+              </div>
+            </div>
+            <span className="material-symbols-outlined text-[20px] text-gray-400" aria-hidden="true">
+              chevron_right
+            </span>
+          </Link>
+        ) : (
+          <Link
+            to="/jadi-mitra"
+            className="flex items-center justify-between gap-4 p-4 sm:px-6 hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <span className="w-10 h-10 rounded-xl bg-gray-100 text-[#111827] flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                  add_business
+                </span>
+              </span>
+              <div>
+                <p className="text-sm font-bold text-[#111827]">Ajukan Jadi Mitra Wisata</p>
+                <p className="text-xs text-gray-500">Daftarkan destinasi wisata dan verifikasi rekening</p>
               </div>
             </div>
             <span className="material-symbols-outlined text-[20px] text-gray-400" aria-hidden="true">

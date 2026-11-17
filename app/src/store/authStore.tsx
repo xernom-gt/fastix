@@ -15,6 +15,7 @@ interface AuthContextValue {
   loginWithPhone: (phoneNumber: string, fullName: string) => void;
   loginWithGoogle: (email?: string) => CustomerUser;
   loginAsDemoOwner: () => void;
+  upgradeToOwner: (venueIds?: string[]) => void;
   logout: () => void;
 }
 
@@ -96,6 +97,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const upgradeToOwner = (venueIds: string[] = ['tirta-gangga']) => {
+    if (!user) return;
+    saveUser({
+      ...user,
+      role: 'OWNER',
+      ownedVenueIds: user.ownedVenueIds?.length ? user.ownedVenueIds : venueIds,
+    });
+  };
+
   const logout = () => saveUser(null);
 
   return (
@@ -106,6 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithPhone,
         loginWithGoogle,
         loginAsDemoOwner,
+        upgradeToOwner,
         logout,
       }}
     >

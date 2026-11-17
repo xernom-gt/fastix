@@ -9,6 +9,8 @@ import GateLoginPage from './pages/GateLoginPage';
 import GateScanPage from './pages/GateScanPage';
 import JelajahPage from './pages/JelajahPage';
 import LoginPage from './pages/LoginPage';
+import MapPage from './pages/MapPage';
+import MitraApplyPage from './pages/MitraApplyPage';
 import MitraDashboardPage from './pages/MitraDashboardPage';
 import TicketsPage from './pages/TicketsPage';
 import { AuthProvider } from './store/authStore';
@@ -27,11 +29,13 @@ export default function App() {
               <Route index element={<Navigate to="/explore" replace />} />
               <Route path="/explore" element={<ExplorePage />} />
               <Route path="/jelajah" element={<JelajahPage />} />
+              <Route path="/peta" element={<MapPage />} />
               <Route path="/destinasi/:id" element={<DetailPage />} />
               <Route path="/checkout/:invoiceId" element={<CheckoutPage />} />
               <Route path="/tiket" element={<TicketsPage />} />
               <Route path="/tiket/:ticketCode" element={<TicketsPage />} />
               <Route path="/akun" element={<AccountPage />} />
+              <Route path="/jadi-mitra" element={<MitraApplyPage />} />
               <Route path="*" element={<Navigate to="/explore" replace />} />
             </Route>
             <Route element={<OwnerLayout />}>

@@ -14,7 +14,7 @@ export const AppLayout: React.FC = () => {
     }`;
 
   const bottomNavClass = ({ isActive }: { isActive: boolean }) =>
-    `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+    `flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold whitespace-nowrap transition-colors ${
       isActive ? 'text-[#111827]' : 'text-gray-500'
     }`;
 
@@ -60,15 +60,12 @@ export const AppLayout: React.FC = () => {
             <NavLink to="/jelajah" className={navClass}>
               Jelajah
             </NavLink>
-            <NavLink to="/tiket" className={navClass}>
-              Tiket Saya
+            <NavLink to="/peta" className={navClass}>
+              Peta
             </NavLink>
-            <a
-              href={LANDING_URL}
-              className="px-4 py-1.5 rounded-full text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-            >
-              Jadi Mitra
-            </a>
+            <NavLink to="/tiket" className={navClass}>
+              Pesanan Saya
+            </NavLink>
           </nav>
 
           <div className="flex items-center justify-end gap-2 md:justify-self-end">
@@ -223,31 +220,37 @@ export const AppLayout: React.FC = () => {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navigasi bawah mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-4 h-16"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-5 h-16"
       >
         <NavLink to="/explore" end className={bottomNavClass}>
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
             home
           </span>
           <span>Beranda</span>
         </NavLink>
         <NavLink to="/jelajah" className={bottomNavClass}>
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
             explore
           </span>
           <span>Jelajah</span>
         </NavLink>
-        <NavLink to="/tiket" className={bottomNavClass}>
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-            qr_code_2
+        <NavLink to="/peta" className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+            map
           </span>
-          <span>Tiket Saya</span>
+          <span>Peta</span>
+        </NavLink>
+        <NavLink to="/tiket" className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+            receipt_long
+          </span>
+          <span>Pesanan</span>
         </NavLink>
         <NavLink
           to={isAuthenticated ? '/akun' : '/login?redirect=/akun'}
           className={bottomNavClass}
         >
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
             person
           </span>
           <span>Akun</span>
