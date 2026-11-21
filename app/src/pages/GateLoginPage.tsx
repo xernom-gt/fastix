@@ -6,7 +6,7 @@ export default function GateLoginPage() {
   const navigate = useNavigate();
   const existingSession = loadGateSession();
 
-  const [venueCode, setVenueCode] = useState('LOKA-0142');
+  const [venueCode, setVenueCode] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
 
@@ -96,14 +96,14 @@ export default function GateLoginPage() {
               Masuk Petugas Gate
             </h1>
             <p className="text-xs sm:text-sm text-gray-500">
-              Gunakan kode destinasi dan PIN 6 digit dari pengelola wisata.
+              Masukkan nomor seri wisata dan PIN 6 digit dari Owner.
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label htmlFor="gate-venue-code" className="block text-xs font-semibold text-[#111827]">
-                Kode Destinasi
+                No. Seri / Kode Wisata
               </label>
               <input
                 id="gate-venue-code"
@@ -112,7 +112,7 @@ export default function GateLoginPage() {
                 onChange={(e) => setVenueCode(e.target.value.toUpperCase())}
                 placeholder="LOKA-0142"
                 required
-                className="w-full h-11 px-3.5 rounded-xl bg-white border border-gray-300 focus:border-[#111827] focus:outline-none font-mono text-sm text-[#111827]"
+                className="w-full h-12 px-3.5 rounded-xl bg-white border border-gray-300 focus:border-[#111827] focus:outline-none font-mono text-base text-[#111827]"
               />
             </div>
 
@@ -129,12 +129,8 @@ export default function GateLoginPage() {
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="••••••"
                 required
-                className="w-full h-11 px-3.5 rounded-xl bg-white border border-gray-300 focus:border-[#111827] focus:outline-none font-mono text-sm tracking-[0.25em] text-[#111827]"
+                className="w-full h-12 px-3.5 rounded-xl bg-white border border-gray-300 focus:border-[#111827] focus:outline-none font-mono text-base tracking-[0.25em] text-[#111827]"
               />
-              <p className="text-[11px] text-gray-500">
-                Simulasi: <span className="font-mono font-bold text-[#111827]">LOKA-0142</span> •
-                PIN <span className="font-mono font-bold text-[#111827]">482910</span>
-              </p>
             </div>
 
             {error && (

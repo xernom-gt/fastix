@@ -261,24 +261,18 @@ export default function GateScanPage() {
             <button
               type="button"
               onClick={() => setIsOfflineMode((prev) => !prev)}
-              className={`px-3 py-1.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 border transition-colors ${
+              className={`min-h-[36px] px-3.5 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
                 isOfflineMode
                   ? 'bg-amber-400 text-[#111827] border-amber-300'
                   : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30 hover:bg-emerald-500/30'
               }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  isOfflineMode ? 'bg-[#111827]' : 'bg-emerald-400'
-                }`}
-                aria-hidden="true"
-              />
-              <span>{isOfflineMode ? 'Offline' : 'Online'}</span>
+              {isOfflineMode ? 'Offline' : 'Online'}
             </button>
             <button
               type="button"
               onClick={handleLogout}
-              className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors"
+              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors cursor-pointer"
             >
               Keluar
             </button>
@@ -288,20 +282,26 @@ export default function GateScanPage() {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6 space-y-4 sm:space-y-6">
         {/* Ringkasan Harian */}
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
-          <div className="rounded-xl sm:rounded-2xl bg-white border border-gray-200 p-3 sm:p-4">
-            <p className="text-[11px] font-semibold text-gray-500">Total Hari Ini</p>
-            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-0.5">
+        <div className="grid grid-cols-3 gap-2 sm:gap-4">
+          <div className="min-w-0 rounded-xl sm:rounded-2xl bg-white border border-gray-200 px-2.5 py-3 sm:p-4">
+            <p className="text-[11px] sm:text-xs font-semibold text-gray-500 leading-tight">
+              Total Hari Ini
+            </p>
+            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-1">
               {venueTickets.length}
             </p>
           </div>
-          <div className="rounded-xl sm:rounded-2xl bg-white border border-gray-200 p-3 sm:p-4">
-            <p className="text-[11px] font-semibold text-gray-500">Belum Check-in</p>
-            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-0.5">{validCount}</p>
+          <div className="min-w-0 rounded-xl sm:rounded-2xl bg-white border border-gray-200 px-2.5 py-3 sm:p-4">
+            <p className="text-[11px] sm:text-xs font-semibold text-gray-500 leading-tight">
+              Belum Check-in
+            </p>
+            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-1">{validCount}</p>
           </div>
-          <div className="rounded-xl sm:rounded-2xl bg-white border border-gray-200 p-3 sm:p-4">
-            <p className="text-[11px] font-semibold text-gray-500">Sudah Masuk</p>
-            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-0.5">
+          <div className="min-w-0 rounded-xl sm:rounded-2xl bg-white border border-gray-200 px-2.5 py-3 sm:p-4">
+            <p className="text-[11px] sm:text-xs font-semibold text-gray-500 leading-tight">
+              Sudah Masuk
+            </p>
+            <p className="text-lg sm:text-xl font-extrabold text-[#111827] mt-1">
               {redeemedCount}
             </p>
           </div>
@@ -539,7 +539,7 @@ export default function GateScanPage() {
                     value={manualInput}
                     onChange={(e) => setManualInput(e.target.value)}
                     placeholder="PWL-TIX-9A8B7C6D"
-                    className="flex-1 h-12 px-4 rounded-xl border border-gray-300 font-mono text-sm text-[#111827] focus:border-[#111827] focus:outline-none"
+                    className="w-full sm:flex-1 min-h-[48px] h-12 px-4 rounded-xl border border-gray-300 font-mono text-base text-[#111827] focus:border-[#111827] focus:outline-none"
                   />
                   <button
                     type="submit"
