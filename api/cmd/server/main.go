@@ -18,6 +18,7 @@ import (
 	"fastix/api/internal/repository"
 	"fastix/api/internal/response"
 	"fastix/api/internal/service"
+	"fastix/api/internal/worker"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -82,12 +83,30 @@ func main() {
 	authRepo := repository.NewPgxAuthRepository(pool)
 	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv)
 	authHandler := handler.NewAuthHandler(authSvc)
+
+	discoveryRepo := repository.NewPgxDiscoveryRepository(pool)
+	discoverySvc := service.NewDiscoveryService(discoveryRepo)
+	discoveryHandler := handler.NewDiscoveryHandler(discoverySvc)
+
+	bookingRepo := repository.NewPgxBookingRepository(pool)
+	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.AppEnv)
+	bookingHandler := handler.NewBookingHandler(bookingSvc)
+
+	workerCtx, cancelWorkers := context.WithCancel(rootCtx)
+	defer cancelWorkers()
+	go worker.StartScheduler(workerCtx, bookingSvc, time.Minute)
+
 	authLimiter := middleware.NewRateLimiter(20, time.Minute)
 	requireAuth := middleware.RequireAuth(cfg.JWTSecret)
 
 	healthHandler := handler.NewHealthHandler(pool, cfg.AppEnv)
 	v1 := app.Group("/api/v1")
 	v1.Get("/health", healthHandler.Check)
+
+	v1.Get("/regions", discoveryHandler.ListRegions)
+	v1.Post("/partner-leads", discoveryHandler.CreatePartnerLead)
+	v1.Get("/venues", discoveryHandler.ListVenues)
+	v1.Get("/venues/:id", discoveryHandler.GetVenueDetail)
 
 	authGroup := v1.Group("/auth", authLimiter)
 	authGroup.Post("/register", authHandler.Register)
@@ -97,6 +116,13 @@ func main() {
 	v1.Get("/auth/me", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.Me)
 	v1.Patch("/auth/profile", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.UpdateProfile)
 
+	v1.Post("/bookings", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.CreateBooking)
+	v1.Get("/bookings/:invoiceId", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.GetBooking)
+	v1.Post("/bookings/:invoiceId/simulate-pay", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.SimulatePay)
+	v1.Post("/webhooks/qris", bookingHandler.QRISWebhook)
+	v1.Get("/tickets", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.ListTickets)
+	v1.Get("/tickets/:ticketCode", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.GetTicket)
+
 	v1.Post("/gate/auth/login", authLimiter, authHandler.GateLogin)
 
 	shutdownCh := make(chan os.Signal, 1)
@@ -105,6 +131,7 @@ func main() {
 	go func() {
 		<-shutdownCh
 		logger.Info("shutting down server")
+		cancelWorkers()
 		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
 			logger.Error("server shutdown error", "error", err)
 		}
