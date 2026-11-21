@@ -92,9 +92,13 @@ func main() {
 	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.AppEnv)
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
+	opsRepo := repository.NewPgxOperationsRepository(pool)
+	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey)
+	opsHandler := handler.NewOperationsHandler(opsSvc)
+
 	workerCtx, cancelWorkers := context.WithCancel(rootCtx)
 	defer cancelWorkers()
-	go worker.StartScheduler(workerCtx, bookingSvc, time.Minute)
+	go worker.StartScheduler(workerCtx, bookingSvc, opsSvc, time.Minute)
 
 	authLimiter := middleware.NewRateLimiter(20, time.Minute)
 	requireAuth := middleware.RequireAuth(cfg.JWTSecret)
@@ -124,6 +128,20 @@ func main() {
 	v1.Get("/tickets/:ticketCode", requireAuth, middleware.RequireRoles(domain.RoleTourist), bookingHandler.GetTicket)
 
 	v1.Post("/gate/auth/login", authLimiter, authHandler.GateLogin)
+	v1.Get("/gate/tickets/today", requireAuth, middleware.RequireRoles(domain.RoleGateStaff, domain.RoleMitra), opsHandler.ListTodayGateTickets)
+	v1.Post("/gate/redeem", authLimiter, requireAuth, middleware.RequireRoles(domain.RoleGateStaff, domain.RoleMitra), opsHandler.GateRedeem)
+	v1.Post("/gate/sync", requireAuth, middleware.RequireRoles(domain.RoleGateStaff, domain.RoleMitra), opsHandler.GateSync)
+
+	v1.Post("/mitra/kyb", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.SubmitKYB)
+	mitraGroup := v1.Group("/mitra", requireAuth, middleware.RequireRoles(domain.RoleMitra))
+	mitraGroup.Get("/venues", opsHandler.ListMitraVenues)
+	mitraGroup.Post("/tickets", opsHandler.CreateMitraTicket)
+	mitraGroup.Patch("/tickets/:id", opsHandler.UpdateMitraTicket)
+	mitraGroup.Get("/staffs", opsHandler.ListMitraStaffs)
+	mitraGroup.Post("/staffs", opsHandler.CreateMitraStaff)
+	mitraGroup.Patch("/staffs/:id", opsHandler.UpdateMitraStaff)
+	mitraGroup.Get("/finance", opsHandler.GetMitraFinance)
+	mitraGroup.Post("/payouts", opsHandler.CreatePayout)
 
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)

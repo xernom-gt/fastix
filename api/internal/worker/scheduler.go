@@ -11,8 +11,13 @@ type BookingMaintainer interface {
 	RunMaintenanceWorkers(ctx context.Context) (expiredCount, refundedCount int64, err error)
 }
 
+// EscrowReleaser moves H+1 redeemed ticket funds from pending_balance to available_balance.
+type EscrowReleaser interface {
+	ReleaseEscrowHPlusOne(ctx context.Context) (int64, error)
+}
+
 // StartScheduler runs background maintenance ticks until ctx is cancelled.
-func StartScheduler(ctx context.Context, bookingSvc BookingMaintainer, interval time.Duration) {
+func StartScheduler(ctx context.Context, bookingSvc BookingMaintainer, opsSvc EscrowReleaser, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -23,13 +28,21 @@ func StartScheduler(ctx context.Context, bookingSvc BookingMaintainer, interval 
 		case <-ticker.C:
 			tickCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			expired, refunded, err := bookingSvc.RunMaintenanceWorkers(tickCtx)
-			cancel()
 			if err != nil {
-				slog.Error("maintenance worker failed", "error", err)
-				continue
+				slog.Error("booking maintenance worker failed", "error", err)
 			}
-			if expired > 0 || refunded > 0 {
-				slog.Info("maintenance worker completed", "expiredBookings", expired, "refundedTickets", refunded)
+
+			var released int64
+			if opsSvc != nil {
+				released, err = opsSvc.ReleaseEscrowHPlusOne(tickCtx)
+				if err != nil {
+					slog.Error("escrow release worker failed", "error", err)
+				}
+			}
+			cancel()
+
+			if expired > 0 || refunded > 0 || released > 0 {
+				slog.Info("maintenance worker completed", "expiredBookings", expired, "refundedTickets", refunded, "releasedEscrowItems", released)
 			}
 		}
 	}
