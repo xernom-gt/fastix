@@ -12,9 +12,12 @@ import (
 
 	"fastix/api/internal/config"
 	"fastix/api/internal/database"
+	"fastix/api/internal/domain"
 	"fastix/api/internal/handler"
 	"fastix/api/internal/middleware"
+	"fastix/api/internal/repository"
 	"fastix/api/internal/response"
+	"fastix/api/internal/service"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -76,9 +79,25 @@ func main() {
 	app.Use(recover.New())
 	app.Use(middleware.NewCORS(cfg.CORSAllowedOrigins))
 
+	authRepo := repository.NewPgxAuthRepository(pool)
+	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv)
+	authHandler := handler.NewAuthHandler(authSvc)
+	authLimiter := middleware.NewRateLimiter(20, time.Minute)
+	requireAuth := middleware.RequireAuth(cfg.JWTSecret)
+
 	healthHandler := handler.NewHealthHandler(pool, cfg.AppEnv)
 	v1 := app.Group("/api/v1")
 	v1.Get("/health", healthHandler.Check)
+
+	authGroup := v1.Group("/auth", authLimiter)
+	authGroup.Post("/register", authHandler.Register)
+	authGroup.Post("/register/verify-otp", authHandler.VerifyRegistrationOTP)
+	authGroup.Post("/login", authHandler.Login)
+
+	v1.Get("/auth/me", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.Me)
+	v1.Patch("/auth/profile", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.UpdateProfile)
+
+	v1.Post("/gate/auth/login", authLimiter, authHandler.GateLogin)
 
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)

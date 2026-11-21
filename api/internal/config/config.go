@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ type Config struct {
 	CORSAllowedOrigins string
 	JWTSecret          string
 	QRHMACSecret       string
+	KYBEncryptionKey   []byte
 }
 
 // Load reads .env if present and returns validated application configuration.
@@ -34,6 +36,21 @@ func Load() (Config, error) {
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if len(cfg.JWTSecret) < 16 {
+		return Config{}, fmt.Errorf("JWT_SECRET must be at least 16 characters")
+	}
+	if len(cfg.QRHMACSecret) < 16 {
+		return Config{}, fmt.Errorf("QR_HMAC_SECRET must be at least 16 characters")
+	}
+
+	kybHex := strings.TrimSpace(os.Getenv("KYB_ENCRYPTION_KEY"))
+	if kybHex != "" {
+		decoded, err := hex.DecodeString(kybHex)
+		if err != nil || len(decoded) != 32 {
+			return Config{}, fmt.Errorf("KYB_ENCRYPTION_KEY must be a 64-char hex AES-256 key")
+		}
+		cfg.KYBEncryptionKey = decoded
 	}
 
 	return cfg, nil
