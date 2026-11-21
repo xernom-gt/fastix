@@ -52,9 +52,17 @@ export function VenueCard({
 
       <div className="pt-3 flex-1 flex flex-col justify-between gap-2.5 min-w-0">
         <div className="space-y-1.5 min-w-0">
-          <h3 className="text-sm font-bold text-[#111827] truncate group-hover:text-black transition-colors">
-            {venue.nama}
-          </h3>
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <h3 className="text-sm font-bold text-[#111827] truncate group-hover:text-black transition-colors">
+              {venue.nama}
+            </h3>
+            <span
+              className="material-symbols-outlined text-[18px] text-[#111827] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 shrink-0"
+              aria-hidden="true"
+            >
+              arrow_forward
+            </span>
+          </div>
           <div className="flex items-center gap-1.5 text-xs text-gray-500">
             <span className="material-symbols-outlined text-[14px] text-[#111827] shrink-0" aria-hidden="true">
               calendar_month

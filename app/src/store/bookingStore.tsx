@@ -36,6 +36,14 @@ interface BookingContextValue extends BookingState {
 const STORAGE_KEY = 'fastix_bookings_v1';
 const VENUES_STORAGE_KEY = 'fastix_venues_v1';
 
+export function diffDays(dateA: string, dateB: string = getTodayISO()): number {
+  if (!dateA || !dateB) return 0;
+  const fromMs = new Date(dateA.slice(0, 10) + 'T00:00:00Z').getTime();
+  const toMs = new Date(dateB.slice(0, 10) + 'T00:00:00Z').getTime();
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) return 0;
+  return Math.floor((toMs - fromMs) / (1000 * 60 * 60 * 24));
+}
+
 const SEED_TICKET: ETicket = {
   id: 'tix_seed_01',
   ticketCode: 'PWL-TIX-9A8B7C6D',
@@ -71,6 +79,90 @@ const SEED_REDEEMED_TICKET: ETicket = {
   redeemedAt: new Date().toISOString(),
 };
 
+const SEED_OLD_TICKET: ETicket = {
+  id: 'tix_seed_03',
+  ticketCode: 'PWL-TIX-7C2D9E41',
+  invoiceNumber: 'PWL/INV/20261108/7712',
+  venueId: 'borobudur',
+  venueCode: 'LOKA-0421',
+  venueName: 'Candi Borobudur Heritage',
+  venueAddress: 'Jl. Badrawati, Borobudur, Magelang, Jawa Tengah 56553',
+  ticketTitle: 'Tiket Masuk Reguler',
+  bookingDate: '2026-11-08',
+  signatureHash: 'hmac_7c2d9e41',
+  qrPayload: 'PWL-TIX-7C2D9E41|borobudur|2026-11-08|hmac_7c2d9e41',
+  status: 'VALID',
+  holderName: 'Raka Pratama',
+  paidAt: '2026-11-08T10:00:00.000Z',
+};
+
+const SEED_OLD_TX: Transaction = {
+  id: 'tx_seed_03',
+  invoiceNumber: 'PWL/INV/20261108/7712',
+  venueId: 'borobudur',
+  venueCode: 'LOKA-0421',
+  venueName: 'Candi Borobudur Heritage',
+  venueAddress: 'Jl. Badrawati, Borobudur, Magelang, Jawa Tengah 56553',
+  bookingDate: '2026-11-08',
+  items: [
+    {
+      ticketId: 'borobudur-reguler',
+      ticketTitle: 'Tiket Masuk Reguler',
+      bookingDate: '2026-11-08',
+      quantity: 1,
+      unitPrice: 50000,
+    },
+  ],
+  subtotal: 50000,
+  platformFee: 2500,
+  totalAmount: 52500,
+  paymentStatus: 'PAID',
+  qrString: '00020101021226PARIWISLOKAPWL/INV/20261108/77125802ID',
+  expiredAt: '2026-11-08T10:15:00.000Z',
+  createdAt: '2026-11-08T10:00:00.000Z',
+  paidAt: '2026-11-08T10:02:00.000Z',
+};
+
+function applyAutoRefund(loaded: BookingState): BookingState {
+  const today = getTodayISO();
+  let hasChanges = false;
+
+  const tickets = loaded.tickets.map((t) => {
+    if (t.status === 'VALID' && diffDays(t.bookingDate, today) >= 7) {
+      hasChanges = true;
+      return { ...t, status: 'REFUNDED' as const };
+    }
+    return t;
+  });
+
+  const transactions = loaded.transactions.map((tx) => {
+    if (tx.paymentStatus === 'PAID' && diffDays(tx.bookingDate, today) >= 7) {
+      const relatedTickets = tickets.filter((t) => t.invoiceNumber === tx.invoiceNumber);
+      const hasRedeemed = relatedTickets.some((t) => t.status === 'REDEEMED');
+      if (!hasRedeemed) {
+        hasChanges = true;
+        return { ...tx, paymentStatus: 'REFUNDED' as const };
+      }
+    }
+    return tx;
+  });
+
+  const nextState: BookingState = {
+    transactions,
+    tickets,
+  };
+
+  if (hasChanges) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    } catch {
+      // ignore storage errors during load
+    }
+  }
+
+  return nextState;
+}
+
 function loadVenues(): Destinasi[] {
   try {
     const raw = localStorage.getItem(VENUES_STORAGE_KEY);
@@ -82,16 +174,32 @@ function loadVenues(): Destinasi[] {
 }
 
 function loadBookings(): BookingState {
+  let loaded: BookingState;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as BookingState;
+    if (raw) {
+      loaded = JSON.parse(raw) as BookingState;
+    } else {
+      loaded = {
+        transactions: [SEED_OLD_TX],
+        tickets: [SEED_TICKET, SEED_REDEEMED_TICKET, SEED_OLD_TICKET],
+      };
+    }
   } catch {
-    // ignore corrupted storage
+    loaded = {
+      transactions: [SEED_OLD_TX],
+      tickets: [SEED_TICKET, SEED_REDEEMED_TICKET, SEED_OLD_TICKET],
+    };
   }
-  return {
-    transactions: [],
-    tickets: [SEED_TICKET, SEED_REDEEMED_TICKET],
-  };
+
+  if (!loaded.tickets.some((t) => t.id === 'tix_seed_03')) {
+    loaded.tickets = [...loaded.tickets, SEED_OLD_TICKET];
+  }
+  if (!loaded.transactions.some((tx) => tx.id === 'tx_seed_03')) {
+    loaded.transactions = [...loaded.transactions, SEED_OLD_TX];
+  }
+
+  return applyAutoRefund(loaded);
 }
 
 const BookingContext = createContext<BookingContextValue | null>(null);
