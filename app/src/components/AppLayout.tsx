@@ -1,16 +1,20 @@
 import React from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 
 const LANDING_URL = import.meta.env.VITE_LANDING_URL ?? 'http://localhost:5173';
 
 export const AppLayout: React.FC = () => {
-  const { user, isAuthenticated, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
 
   const navClass = ({ isActive }: { isActive: boolean }) =>
     `px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
       isActive ? 'bg-white/20 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'
+    }`;
+
+  const bottomNavClass = ({ isActive }: { isActive: boolean }) =>
+    `flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold whitespace-nowrap transition-colors ${
+      isActive ? 'text-[#111827]' : 'text-gray-500'
     }`;
 
   return (
@@ -35,8 +39,8 @@ export const AppLayout: React.FC = () => {
 
       {/* Main Fastix Monochrome Header */}
       <header className="sticky top-0 z-40 bg-[#111827] text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <Link to="/explore" className="flex items-center gap-2.5 shrink-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between md:grid md:grid-cols-3 gap-4">
+          <Link to="/explore" className="flex items-center gap-2.5 shrink-0 md:justify-self-start">
             <span className="w-9 h-9 rounded-xl bg-white/15 border border-white/20 text-white flex items-center justify-center">
               <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
                 confirmation_number
@@ -47,7 +51,7 @@ export const AppLayout: React.FC = () => {
 
           <nav
             aria-label="Menu aplikasi utama"
-            className="hidden md:flex items-center gap-1 bg-white/10 border border-white/10 rounded-full p-1"
+            className="hidden md:flex items-center justify-self-center gap-1 bg-white/10 border border-white/10 rounded-full p-1 whitespace-nowrap"
           >
             <NavLink to="/explore" end className={navClass}>
               Beranda
@@ -55,49 +59,30 @@ export const AppLayout: React.FC = () => {
             <NavLink to="/jelajah" className={navClass}>
               Jelajah
             </NavLink>
-            <NavLink to="/tiket" className={navClass}>
-              Tiket Saya
+            <NavLink to="/peta" className={navClass}>
+              Peta
             </NavLink>
-            <a
-              href={LANDING_URL}
-              className="px-4 py-1.5 rounded-full text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-            >
-              Jadi Mitra
-            </a>
+            <NavLink to="/tiket" className={navClass}>
+              Pesanan Saya
+            </NavLink>
           </nav>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Cari destinasi"
-              onClick={() => navigate('/jelajah')}
-              className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                search
-              </span>
-            </button>
-
+          <div className="flex items-center justify-end md:justify-self-end">
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:inline-block text-xs font-semibold text-white bg-white/15 px-3 py-1.5 rounded-xl border border-white/15">
-                  {user.fullName}
+              <Link
+                to="/akun"
+                className="inline-flex items-center gap-2 text-xs font-bold text-white bg-white/15 hover:bg-white/25 px-3.5 py-2 rounded-xl border border-white/15 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                  person
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    logout();
-                    navigate('/explore');
-                  }}
-                  className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors"
-                >
-                  Keluar
-                </button>
-              </div>
+                <span className="hidden sm:inline">{user.fullName}</span>
+                <span className="sm:hidden">Akun</span>
+              </Link>
             ) : (
               <Link
                 to="/login"
-                className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold transition-colors"
+                className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold transition-colors"
               >
                 Masuk
               </Link>
@@ -166,6 +151,11 @@ export const AppLayout: React.FC = () => {
                     Cek E-Ticket QRIS
                   </Link>
                 </li>
+                <li>
+                  <Link to="/gate/login" className="hover:text-white transition-colors">
+                    Portal Staff Gate
+                  </Link>
+                </li>
               </ul>
             </div>
 
@@ -206,43 +196,41 @@ export const AppLayout: React.FC = () => {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navigasi bawah mobile"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-3 h-16"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 grid grid-cols-5 h-16"
       >
-        <NavLink
-          to="/explore"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+        <NavLink to="/explore" end className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+            home
+          </span>
+          <span>Beranda</span>
+        </NavLink>
+        <NavLink to="/jelajah" className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
             explore
           </span>
           <span>Jelajah</span>
         </NavLink>
-        <NavLink
-          to="/tiket"
-          className={({ isActive }) =>
-            `flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold ${
-              isActive ? 'text-[#111827]' : 'text-gray-500'
-            }`
-          }
-        >
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-            qr_code_2
+        <NavLink to="/peta" className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+            map
           </span>
-          <span>Tiket Saya</span>
+          <span>Peta</span>
         </NavLink>
-        <Link
-          to={isAuthenticated ? '/tiket' : '/login'}
-          className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold text-gray-500"
+        <NavLink to="/tiket" className={bottomNavClass}>
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+            receipt_long
+          </span>
+          <span>Pesanan</span>
+        </NavLink>
+        <NavLink
+          to={isAuthenticated ? '/akun' : '/login?redirect=/akun'}
+          className={bottomNavClass}
         >
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
             person
           </span>
-          <span>{isAuthenticated ? 'Akun' : 'Masuk'}</span>
-        </Link>
+          <span>Akun</span>
+        </NavLink>
       </nav>
     </div>
   );

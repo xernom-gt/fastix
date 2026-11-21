@@ -6,4 +6,5 @@ export * from './utils/formatRupiah';
 export * from './utils/formatDistance';
 export * from './utils/formatDate';
 export * from './utils/codeGenerators';
+export * from './utils/smartSearch';
 export * from './data/mockVenues';

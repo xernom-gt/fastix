@@ -100,7 +100,7 @@
 
 #### `GET /venues`
 **Query Params:**
-- `q` (string, opsional): Kata kunci nama, lokasi, atau `LOKA-XXXX`
+- `q` (string, opsional): Kata kunci nama wisata atau lokasi. Backend wajib menormalisasi `camelCase` (`candiBorobudur` ➔ `candi borobudur`), *case-insensitive*, mengabaikan spasi berlebih, serta mendukung koreksi typo menggunakan indeks **PostgreSQL `pg_trgm` (GIN Trigram Index)** agar hemat memori saat data besar.
 - `kota` (string, opsional): `bali` | `jogja` | `bandung` | `jakarta` | `malang` | `all`
 - `kategori` (string, opsional): `candi_sejarah` | `pantai_bahari` | `alam_geopark` | `desa_wisata` | `museum_edukasi` | `theme_waterpark` | `all`
 - `tanggal` (string, `YYYY-MM-DD`, default hari ini): Menghitung sisa kuota pada tanggal tersebut
@@ -132,7 +132,9 @@
   ],
   "meta": {
     "total": 12,
-    "tanggal": "2026-11-15"
+    "tanggal": "2026-11-15",
+    "isFuzzyMatch": false,
+    "correctedQuery": null
   }
 }
 ```

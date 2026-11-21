@@ -12,13 +12,13 @@ const STEPS = [
 
 export const BookingStepper: React.FC<BookingStepperProps> = ({ currentStep }) => {
   return (
-    <nav aria-label="Tahap pemesanan tiket" className="bg-white border border-gray-200 rounded-2xl px-4 py-3">
-      <ol className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+    <nav aria-label="Tahap pemesanan tiket" className="bg-white border border-gray-200 rounded-2xl px-4 py-2.5">
+      <ol className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2 text-xs sm:text-sm">
         {STEPS.map((item, idx) => {
           const isDone = item.step < currentStep;
           const isActive = item.step === currentStep;
           return (
-            <li key={item.step} className="flex items-center gap-2 flex-1 last:flex-none">
+            <li key={item.step} className="flex items-center gap-2 shrink-0">
               <span
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${
                   isActive || isDone
@@ -29,14 +29,14 @@ export const BookingStepper: React.FC<BookingStepperProps> = ({ currentStep }) =
                 {isDone ? '✓' : item.step}
               </span>
               <span
-                className={`font-bold truncate ${
+                className={`font-bold whitespace-nowrap ${
                   isActive ? 'text-gray-900' : isDone ? 'text-gray-700' : 'text-gray-400'
                 }`}
               >
                 {item.label}
               </span>
               {idx < STEPS.length - 1 && (
-                <span className="hidden sm:block flex-1 h-px bg-gray-200 mx-2" aria-hidden="true" />
+                <span className="hidden md:block w-6 h-px bg-gray-200 ml-1" aria-hidden="true" />
               )}
             </li>
           );

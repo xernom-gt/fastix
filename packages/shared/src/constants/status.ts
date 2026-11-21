@@ -61,6 +61,13 @@ export const STATUS_STYLE_MAP: Record<string, StatusStyleConfig> = {
     dot: '#059669',
     label: 'PAID · Lunas (Webhook Verified)',
   },
+  'payment:REFUNDED': {
+    bg: '#DBEAFE',
+    text: '#1E40AF',
+    border: '#BFDBFE',
+    dot: '#2563EB',
+    label: 'REFUNDED · Dana Dikembalikan',
+  },
   'payment:EXPIRED': {
     bg: '#FEE2E2',
     text: '#991B1B',
@@ -89,6 +96,13 @@ export const STATUS_STYLE_MAP: Record<string, StatusStyleConfig> = {
     border: '#BFDBFE',
     dot: '#2563EB',
     label: 'REDEEMED · Sudah Dipindai Masuk',
+  },
+  'redemption:REFUNDED': {
+    bg: '#DBEAFE',
+    text: '#1E40AF',
+    border: '#BFDBFE',
+    dot: '#2563EB',
+    label: 'REFUNDED · Tidak Digunakan > 7 Hari',
   },
   'redemption:EXPIRED': {
     bg: '#FEE2E2',

@@ -1,10 +1,33 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { formatRupiah, formatTanggalID, StatusBadge } from '@pariwisloka/shared';
+import { formatRupiah, formatTanggalID, type PaymentStatus } from '@pariwisloka/shared';
 import { BookingStepper } from '../components/BookingStepper';
 import { QrMatrixSvg } from '../components/QrMatrixSvg';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
+
+const PAYMENT_STATUS_LABEL: Record<PaymentStatus, { text: string; className: string }> = {
+  PENDING: {
+    text: 'Menunggu Pembayaran QRIS',
+    className: 'bg-amber-100 text-amber-900',
+  },
+  PAID: {
+    text: 'Pembayaran Lunas',
+    className: 'bg-emerald-100 text-emerald-900',
+  },
+  REFUNDED: {
+    text: 'Dana Dikembalikan',
+    className: 'bg-blue-100 text-blue-900',
+  },
+  EXPIRED: {
+    text: 'Waktu Habis',
+    className: 'bg-gray-200 text-gray-700',
+  },
+  CANCELLED: {
+    text: 'Dibatalkan',
+    className: 'bg-red-100 text-red-800',
+  },
+};
 
 export default function CheckoutPage() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
@@ -70,7 +93,11 @@ export default function CheckoutPage() {
           </span>
           <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 mt-0.5">{tx.invoiceNumber}</h1>
         </div>
-        <StatusBadge module="payment" status={tx.paymentStatus} />
+        <span
+          className={`px-3 py-1.5 rounded-full text-xs font-bold ${PAYMENT_STATUS_LABEL[tx.paymentStatus].className}`}
+        >
+          {PAYMENT_STATUS_LABEL[tx.paymentStatus].text}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -88,8 +115,8 @@ export default function CheckoutPage() {
                 <QrMatrixSvg value={tx.qrString} size={180} />
               </div>
               <p className="text-xs text-gray-600">
-                Pindai QRIS di atas melalui aplikasi bank atau dompet digital. Status akan berubah otomatis
-                setelah Webhook Payment Gateway diterima.
+                Pindai kode QRIS di atas melalui aplikasi bank atau dompet digital Anda untuk
+                menyelesaikan pembayaran.
               </p>
             </>
           ) : (
@@ -126,7 +153,7 @@ export default function CheckoutPage() {
             <div className="text-sm space-y-1">
               <p className="font-bold text-gray-900">{tx.venueName}</p>
               <p className="text-xs text-gray-600">
-                {tx.venueCode} · Tanggal Kunjungan: {formatTanggalID(tx.bookingDate)}
+                Tanggal Kunjungan: {formatTanggalID(tx.bookingDate)}
               </p>
             </div>
 
@@ -152,15 +179,15 @@ export default function CheckoutPage() {
 
           {tx.paymentStatus === 'PENDING' && (
             <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-3">
-              <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                Simulasi Mode Frontend (Tanpa Backend)
+              <p className="text-xs font-bold text-gray-700">
+                Konfirmasi Pembayaran
               </p>
               <button
                 type="button"
                 onClick={handleSimulatePaid}
                 className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors"
               >
-                Simulasikan Pembayaran Lunas (Webhook PAID)
+                Bayar Sekarang (Demo)
               </button>
               <button
                 type="button"

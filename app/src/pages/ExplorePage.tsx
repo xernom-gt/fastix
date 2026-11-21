@@ -5,7 +5,7 @@ import {
   getTodayISO,
   hitungJarakHaversine,
   KATEGORI_LABELS,
-  MOCK_VENUES,
+  searchVenuesSmart,
   WILAYAH_INDONESIA,
   type Destinasi,
   type KategoriWisata,
@@ -41,7 +41,7 @@ const WILAYAH_SHORT: Record<string, string> = {
 
 export default function ExplorePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { getExtraUsedQuota } = useBookings();
+  const { venues, getExtraUsedQuota } = useBookings();
 
   const [keyword, setKeyword] = useState(searchParams.get('q') ?? '');
   const [kota, setKota] = useState(searchParams.get('kota') ?? 'all');
@@ -83,7 +83,7 @@ export default function ExplorePage() {
     );
   };
 
-  const publishedVenues = useMemo(() => MOCK_VENUES.filter((v) => v.isPublished), []);
+  const publishedVenues = useMemo(() => venues.filter((v) => v.isPublished), [venues]);
 
   const computeRemaining = (v: Destinasi) => {
     const totalQuota = v.tickets.reduce((acc, t) => acc + t.dailyQuota, 0);
@@ -116,37 +116,53 @@ export default function ExplorePage() {
     };
   }, [publishedVenues]);
 
-  const results = useMemo<VenueEntry[]>(() => {
-    const q = keyword.trim().toLowerCase();
-    const list = publishedVenues
-      .filter((v) => {
-        if (kota !== 'all' && v.kotaKode !== kota) return false;
-        if (kategori !== 'all' && v.kategori !== kategori) return false;
-        if (q) {
-          const hay = `${v.nama} ${v.lokasi} ${v.venueCode} ${v.deskripsi}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      })
-      .map((v) => ({
-        venue: v,
-        distanceMeters: userCoords
-          ? hitungJarakHaversine(userCoords.lat, userCoords.lng, v.koordinat.lat, v.koordinat.lng)
-          : null,
-        remainingQuota: computeRemaining(v),
-      }));
+  const { results, usedFuzzy, suggestedTerm } = useMemo(() => {
+    const base = publishedVenues.filter((v) => {
+      if (kota !== 'all' && v.kotaKode !== kota) return false;
+      if (kategori !== 'all' && v.kategori !== kategori) return false;
+      return true;
+    });
+
+    const smart = searchVenuesSmart(base, keyword);
+    const list: VenueEntry[] = smart.items.map((v) => ({
+      venue: v,
+      distanceMeters: userCoords
+        ? hitungJarakHaversine(userCoords.lat, userCoords.lng, v.koordinat.lat, v.koordinat.lng)
+        : null,
+      remainingQuota: computeRemaining(v),
+    }));
 
     if (sortBy === 'harga_asc') {
       list.sort((a, b) => a.venue.hargaMulai - b.venue.hargaMulai);
     } else if (sortBy === 'terdekat' && userCoords) {
       list.sort((a, b) => (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity));
-    } else {
+    } else if (!smart.usedFuzzy) {
       list.sort((a, b) => b.venue.jumlahUlasan - a.venue.jumlahUlasan);
     }
-    return list;
+
+    return {
+      results: list,
+      usedFuzzy: smart.usedFuzzy,
+      suggestedTerm: smart.suggestedTerm,
+    };
   }, [publishedVenues, keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
 
   const featuredSlides = useMemo(() => publishedVenues.slice(0, 4), [publishedVenues]);
+  const [isCarouselPaused, setIsCarouselPaused] = useState(false);
+
+  useEffect(() => {
+    if (isCarouselPaused || featuredSlides.length <= 1) return;
+
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mediaQuery.matches) return;
+
+    const timer = window.setInterval(() => {
+      setBannerIndex((prev) => (prev + 1) % featuredSlides.length);
+    }, 4500);
+
+    return () => window.clearInterval(timer);
+  }, [isCarouselPaused, featuredSlides.length]);
+
   const activeSlide = featuredSlides[bannerIndex % featuredSlides.length];
   const prevSlide = featuredSlides[(bannerIndex - 1 + featuredSlides.length) % featuredSlides.length];
   const prev2Slide = featuredSlides[(bannerIndex - 2 + featuredSlides.length) % featuredSlides.length];
@@ -172,7 +188,16 @@ export default function ExplorePage() {
     <div className="space-y-12 pt-6 sm:pt-8 pb-6">
       {/* 1. Centered Hero Showcase Banner (2-Layer Stacked Peek Deck, Fastix Monochrome Theme) */}
       {activeSlide && (
-        <section aria-label="Destinasi unggulan" className="max-w-7xl mx-auto px-4 sm:px-6">
+        <section
+          aria-label="Destinasi unggulan"
+          className="max-w-7xl mx-auto px-4 sm:px-6"
+          onMouseEnter={() => setIsCarouselPaused(true)}
+          onMouseLeave={() => setIsCarouselPaused(false)}
+          onTouchStart={() => setIsCarouselPaused(true)}
+          onTouchEnd={() => setIsCarouselPaused(false)}
+          onFocusCapture={() => setIsCarouselPaused(true)}
+          onBlurCapture={() => setIsCarouselPaused(false)}
+        >
           <div className="relative flex items-center justify-center">
             {/* Left Outer Peek Card (Layer 2) */}
             {prev2Slide && (
@@ -239,7 +264,7 @@ export default function ExplorePage() {
                       />
                       <div className="absolute inset-0 bg-gradient-to-r from-[#090D16]/95 via-[#111827]/75 to-transparent" />
 
-                      <div className="absolute inset-0 px-8 py-6 sm:px-12 sm:py-8 flex flex-col justify-between max-w-xl text-white">
+                      <div className="absolute inset-0 px-5 py-5 sm:px-12 sm:py-8 flex flex-col justify-between max-w-xl text-white">
                         <div className="flex items-center gap-2 text-xs font-bold text-gray-200">
                           <span className="px-2.5 py-0.5 rounded-full bg-white/15 border border-white/20">
                             Fastix Pilihan
@@ -277,12 +302,12 @@ export default function ExplorePage() {
                 </div>
               </div>
 
-              {/* Prev / Next Controls straddling outer card border */}
+              {/* Prev / Next Controls straddling outer card border on >= sm */}
               <button
                 type="button"
                 aria-label="Slide sebelumnya"
                 onClick={() => setBannerIndex((i) => (i - 1 + featuredSlides.length) % featuredSlides.length)}
-                className="absolute left-2 sm:-left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
+                className="hidden sm:flex absolute -left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                   chevron_left
@@ -292,7 +317,7 @@ export default function ExplorePage() {
                 type="button"
                 aria-label="Slide berikutnya"
                 onClick={() => setBannerIndex((i) => (i + 1) % featuredSlides.length)}
-                className="absolute right-2 sm:-right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
+                className="hidden sm:flex absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] items-center justify-center shadow-md border border-gray-200 z-30 transition-all duration-200"
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                   chevron_right
@@ -345,21 +370,45 @@ export default function ExplorePage() {
             )}
           </div>
 
-          {/* Dot Indicators */}
-          <div className="flex items-center justify-center gap-1.5 mt-4">
-            {featuredSlides.map((s, idx) => (
-              <button
-                key={s.id}
-                type="button"
-                aria-label={`Pilih slide ${idx + 1}`}
-                onClick={() => setBannerIndex(idx)}
-                className={`h-1.5 rounded-full transition-all ${
-                  idx === bannerIndex % featuredSlides.length
-                    ? 'w-6 bg-[#111827]'
-                    : 'w-1.5 bg-gray-300 hover:bg-gray-400'
-                }`}
-              />
-            ))}
+          {/* Dot Indicators & Mobile Prev/Next Controls */}
+          <div className="flex items-center justify-center gap-3 mt-4">
+            <button
+              type="button"
+              aria-label="Slide sebelumnya"
+              onClick={() => setBannerIndex((i) => (i - 1 + featuredSlides.length) % featuredSlides.length)}
+              className="sm:hidden w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-sm border border-gray-200 transition-all duration-200"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                chevron_left
+              </span>
+            </button>
+
+            <div className="flex items-center justify-center gap-1.5">
+              {featuredSlides.map((s, idx) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-label={`Pilih slide ${idx + 1}`}
+                  onClick={() => setBannerIndex(idx)}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === bannerIndex % featuredSlides.length
+                      ? 'w-6 bg-[#111827]'
+                      : 'w-1.5 bg-gray-300 hover:bg-gray-400'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <button
+              type="button"
+              aria-label="Slide berikutnya"
+              onClick={() => setBannerIndex((i) => (i + 1) % featuredSlides.length)}
+              className="sm:hidden w-8 h-8 rounded-full bg-white hover:bg-gray-100 active:scale-95 text-[#111827] flex items-center justify-center shadow-sm border border-gray-200 transition-all duration-200"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                chevron_right
+              </span>
+            </button>
           </div>
         </section>
       )}
@@ -560,7 +609,7 @@ export default function ExplorePage() {
               type="text"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              placeholder="Cari nama wisata atau kode LOKA-XXXX..."
+              placeholder="Cari nama wisata atau kota..."
               className="w-full h-10 px-3.5 rounded-xl bg-white border border-gray-300 text-sm text-[#111827] placeholder:text-gray-400"
             />
           </div>
@@ -617,6 +666,21 @@ export default function ExplorePage() {
           </div>
         </div>
 
+        {usedFuzzy && suggestedTerm && (
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600">
+            <span>
+              Menampilkan hasil terdekat untuk <strong className="text-[#111827]">"{keyword.trim()}"</strong>.
+            </span>
+            <button
+              type="button"
+              onClick={() => setKeyword(suggestedTerm)}
+              className="font-bold text-[#111827] underline underline-offset-4 hover:text-black"
+            >
+              Maksud Anda: {suggestedTerm}?
+            </button>
+          </div>
+        )}
+
         {results.length === 0 ? (
           <div className="bg-gray-50 border border-gray-200 rounded-2xl p-10 text-center space-y-3">
             <span className="material-symbols-outlined text-[40px] text-gray-400" aria-hidden="true">
@@ -672,7 +736,7 @@ export default function ExplorePage() {
           Temukan Wisata Menarik di Kotamu!
         </h2>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="flex sm:grid sm:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto sm:overflow-visible snap-x snap-mandatory pb-2 sm:pb-0 -mx-4 px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {WILAYAH_INDONESIA.map((w) => {
             const active = kota === w.kode;
             return (
@@ -680,7 +744,7 @@ export default function ExplorePage() {
                 key={w.kode}
                 type="button"
                 onClick={() => selectRegion(w.kode)}
-                className={`group rounded-2xl p-4 flex flex-col items-center justify-between gap-5 border transition-all hover:-translate-y-0.5 ${
+                className={`group shrink-0 w-[200px] sm:w-auto snap-start rounded-2xl p-4 flex flex-col items-center justify-between gap-5 border transition-all hover:-translate-y-0.5 ${
                   active
                     ? 'bg-gray-100 border-[#111827] ring-1 ring-[#111827]'
                     : 'bg-gray-50 border-gray-200 hover:border-gray-300'
@@ -693,7 +757,7 @@ export default function ExplorePage() {
                 </div>
 
                 <div className="w-full flex items-center justify-between gap-1.5">
-                  <span className="flex-1 px-3 py-1 rounded-full bg-[#111827] text-white text-[10px] font-extrabold tracking-wide uppercase truncate">
+                  <span className="flex-1 px-3 py-1 rounded-full bg-[#111827] text-white text-[10px] font-extrabold tracking-wide uppercase whitespace-nowrap text-center">
                     {WILAYAH_SHORT[w.kode] ?? w.provinsi}
                   </span>
                   <span className="w-6 h-6 rounded-full bg-[#111827] text-white flex items-center justify-center shrink-0 group-hover:bg-black transition-colors">
