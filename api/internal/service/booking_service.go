@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -23,17 +24,19 @@ const (
 
 // BookingService handles atomic bookings, QRIS settlement, e-tickets, and scheduled workers.
 type BookingService struct {
-	repo         repository.BookingRepository
-	qrHMACSecret string
-	isDev        bool
+	repo              repository.BookingRepository
+	qrHMACSecret      string
+	midtransServerKey string
+	isDev             bool
 }
 
 // NewBookingService constructs a BookingService.
-func NewBookingService(repo repository.BookingRepository, qrHMACSecret, appEnv string) *BookingService {
+func NewBookingService(repo repository.BookingRepository, qrHMACSecret, midtransServerKey, appEnv string) *BookingService {
 	return &BookingService{
-		repo:         repo,
-		qrHMACSecret: qrHMACSecret,
-		isDev:        strings.EqualFold(appEnv, "development"),
+		repo:              repo,
+		qrHMACSecret:      qrHMACSecret,
+		midtransServerKey: midtransServerKey,
+		isDev:             strings.EqualFold(appEnv, "development"),
 	}
 }
 
@@ -97,14 +100,32 @@ func (s *BookingService) GetBooking(ctx context.Context, invoiceID, customerID s
 }
 
 func (s *BookingService) HandleQRISWebhook(ctx context.Context, rawBody []byte, signatureHeader string, req domain.QRISWebhookRequest) (domain.TransactionDTO, error) {
-	if !s.verifySignatureHex(rawBody, signatureHeader) {
-		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrUnauthorized, "INVALID_WEBHOOK_SIGNATURE", "Signature webhook tidak valid.", nil)
+	invoiceNumber := strings.TrimSpace(req.InvoiceNumber)
+	if req.OrderID != "" {
+		invoiceNumber = strings.TrimSpace(req.OrderID)
 	}
-	if !strings.EqualFold(req.Status, domain.PaymentStatusPaid) {
-		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "UNSUPPORTED_WEBHOOK_STATUS", "Status webhook tidak diproses.", nil)
+	gatewayRef := strings.TrimSpace(req.PaymentGatewayRef)
+	if req.TransactionID != "" {
+		gatewayRef = strings.TrimSpace(req.TransactionID)
 	}
 
-	txID, err := s.repo.FindBookingIDByInvoice(ctx, strings.TrimSpace(req.InvoiceNumber))
+	if s.midtransServerKey != "" {
+		if !VerifyMidtransSignature(req.OrderID, req.StatusCode, req.GrossAmount, s.midtransServerKey, req.SignatureKey) {
+			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrUnauthorized, "INVALID_WEBHOOK_SIGNATURE", "Signature Midtrans tidak valid.", nil)
+		}
+		if !isMidtransSettled(req.TransactionStatus) && !strings.EqualFold(req.Status, domain.PaymentStatusPaid) {
+			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "UNSUPPORTED_WEBHOOK_STATUS", "Status webhook tidak diproses.", nil)
+		}
+	} else {
+		if !s.verifySignatureHex(rawBody, signatureHeader) {
+			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrUnauthorized, "INVALID_WEBHOOK_SIGNATURE", "Signature webhook tidak valid.", nil)
+		}
+		if !strings.EqualFold(req.Status, domain.PaymentStatusPaid) {
+			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "UNSUPPORTED_WEBHOOK_STATUS", "Status webhook tidak diproses.", nil)
+		}
+	}
+
+	txID, err := s.repo.FindBookingIDByInvoice(ctx, invoiceNumber)
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrNotFound, "BOOKING_NOT_FOUND", "Invoice tidak ditemukan.", nil)
 	}
@@ -112,7 +133,7 @@ func (s *BookingService) HandleQRISWebhook(ctx context.Context, rawBody []byte, 
 		return domain.TransactionDTO{}, err
 	}
 
-	return s.settleTransaction(ctx, txID, req.PaymentGatewayRef)
+	return s.settleTransaction(ctx, txID, gatewayRef)
 }
 
 func (s *BookingService) SimulatePay(ctx context.Context, invoiceID, customerID string) (domain.TransactionDTO, error) {
@@ -205,6 +226,23 @@ func VerifyQRPayload(secret, qrPayload string) (ticketCode, venueID, bookingDate
 		return "", "", "", false
 	}
 	return ticketCode, venueID, bookingDate, true
+}
+
+// VerifyMidtransSignature checks SHA512(order_id + status_code + gross_amount + serverKey).
+func VerifyMidtransSignature(orderID, statusCode, grossAmount, serverKey, signatureKey string) bool {
+	if orderID == "" || statusCode == "" || grossAmount == "" || serverKey == "" || signatureKey == "" {
+		return false
+	}
+	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + serverKey))
+	gotBytes, err := hex.DecodeString(strings.ToLower(strings.TrimSpace(signatureKey)))
+	if err != nil {
+		return false
+	}
+	return hmac.Equal(gotBytes, sum[:])
+}
+
+func isMidtransSettled(txStatus string) bool {
+	return strings.EqualFold(txStatus, "settlement") || strings.EqualFold(txStatus, "capture")
 }
 
 func (s *BookingService) verifySignatureHex(rawBody []byte, signatureHeader string) bool {

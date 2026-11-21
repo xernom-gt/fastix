@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -76,7 +77,7 @@ func TestCalculateFeeAndHMAC(t *testing.T) {
 
 func TestBookingPastDateAndMaintenanceCutoff(t *testing.T) {
 	repo := &stubBookingRepo{}
-	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "development")
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "", "development")
 	ctx := context.Background()
 
 	// Past booking date must fail validation
@@ -113,5 +114,44 @@ func TestBookingPastDateAndMaintenanceCutoff(t *testing.T) {
 		Status:        "PAID",
 	}); err != nil {
 		t.Fatalf("HandleQRISWebhook valid sig: %v", err)
+	}
+}
+
+func TestMidtransWebhookSignatureVerification(t *testing.T) {
+	const serverKey = "SB-Mid-server-test-key"
+	repo := &stubBookingRepo{}
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "production")
+	ctx := context.Background()
+
+	orderID := "PWL/INV/20261121/0042"
+	statusCode := "200"
+	grossAmount := "105000.00"
+	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + serverKey))
+	validSig := hex.EncodeToString(sum[:])
+
+	tx, err := svc.HandleQRISWebhook(ctx, nil, "", domain.QRISWebhookRequest{
+		OrderID:           orderID,
+		StatusCode:        statusCode,
+		GrossAmount:       grossAmount,
+		SignatureKey:      validSig,
+		TransactionStatus: "settlement",
+		TransactionID:     "mid-tx-001",
+	})
+	if err != nil {
+		t.Fatalf("expected valid Midtrans webhook to succeed, got %v", err)
+	}
+	if tx.PaymentStatus != domain.PaymentStatusPaid {
+		t.Fatalf("expected PAID, got %s", tx.PaymentStatus)
+	}
+
+	// Tampered gross_amount must fail signature check
+	if _, err := svc.HandleQRISWebhook(ctx, nil, "", domain.QRISWebhookRequest{
+		OrderID:           orderID,
+		StatusCode:        statusCode,
+		GrossAmount:       "1000.00",
+		SignatureKey:      validSig,
+		TransactionStatus: "settlement",
+	}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized for tampered Midtrans webhook, got %v", err)
 	}
 }

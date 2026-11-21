@@ -18,6 +18,10 @@ type Config struct {
 	JWTSecret          string
 	QRHMACSecret       string
 	KYBEncryptionKey   []byte
+	MidtransEnv        string
+	MidtransMerchantID string
+	MidtransClientKey  string
+	MidtransServerKey  string
 }
 
 // Load reads .env if present and returns validated application configuration.
@@ -32,6 +36,10 @@ func Load() (Config, error) {
 		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175"),
 		JWTSecret:          strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		QRHMACSecret:       strings.TrimSpace(os.Getenv("QR_HMAC_SECRET")),
+		MidtransEnv:        strings.ToLower(getEnvOrDefault("MIDTRANS_ENV", "sandbox")),
+		MidtransMerchantID: strings.TrimSpace(os.Getenv("MIDTRANS_MERCHANT_ID")),
+		MidtransClientKey:  strings.TrimSpace(os.Getenv("MIDTRANS_CLIENT_KEY")),
+		MidtransServerKey:  strings.TrimSpace(os.Getenv("MIDTRANS_SERVER_KEY")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -42,6 +50,13 @@ func Load() (Config, error) {
 	}
 	if len(cfg.QRHMACSecret) < 16 {
 		return Config{}, fmt.Errorf("QR_HMAC_SECRET must be at least 16 characters")
+	}
+
+	if cfg.MidtransEnv != "sandbox" && cfg.MidtransEnv != "production" {
+		return Config{}, fmt.Errorf("MIDTRANS_ENV must be sandbox or production")
+	}
+	if strings.EqualFold(cfg.AppEnv, "production") && cfg.MidtransServerKey == "" {
+		return Config{}, fmt.Errorf("MIDTRANS_SERVER_KEY is required when APP_ENV=production")
 	}
 
 	kybHex := strings.TrimSpace(os.Getenv("KYB_ENCRYPTION_KEY"))

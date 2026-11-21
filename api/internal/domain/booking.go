@@ -57,11 +57,18 @@ type TransactionDTO struct {
 	CreatedAt     string               `json:"createdAt"`
 }
 
-// QRISWebhookRequest represents the payment gateway callback payload.
+// QRISWebhookRequest represents either a Midtrans HTTP notification or internal QRIS callback.
 type QRISWebhookRequest struct {
 	InvoiceNumber     string `json:"invoiceNumber"`
 	PaymentGatewayRef string `json:"paymentGatewayRef"`
 	Status            string `json:"status"`
+
+	OrderID           string `json:"order_id"`
+	StatusCode        string `json:"status_code"`
+	GrossAmount       string `json:"gross_amount"`
+	SignatureKey      string `json:"signature_key"`
+	TransactionStatus string `json:"transaction_status"`
+	TransactionID     string `json:"transaction_id"`
 }
 
 // ETicketDTO represents a single redeemable QR e-ticket.

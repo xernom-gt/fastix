@@ -89,7 +89,7 @@ func main() {
 	discoveryHandler := handler.NewDiscoveryHandler(discoverySvc)
 
 	bookingRepo := repository.NewPgxBookingRepository(pool)
-	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.AppEnv)
+	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.MidtransServerKey, cfg.AppEnv)
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
 	opsRepo := repository.NewPgxOperationsRepository(pool)
