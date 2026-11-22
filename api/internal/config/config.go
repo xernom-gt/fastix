@@ -24,6 +24,7 @@ type Config struct {
 	MidtransMerchantID string
 	MidtransClientKey  string
 	MidtransServerKey  string
+	GoogleClientID     string
 }
 
 // Load reads .env if present and returns validated application configuration.
@@ -47,6 +48,7 @@ func Load() (Config, error) {
 		MidtransMerchantID: strings.TrimSpace(os.Getenv("MIDTRANS_MERCHANT_ID")),
 		MidtransClientKey:  strings.TrimSpace(os.Getenv("MIDTRANS_CLIENT_KEY")),
 		MidtransServerKey:  strings.TrimSpace(os.Getenv("MIDTRANS_SERVER_KEY")),
+		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
 	}
 
 	if len(cfg.JWTSecret) < 16 {

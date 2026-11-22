@@ -93,7 +93,7 @@ func main() {
 	app.Use(middleware.NewCORS(cfg.CORSAllowedOrigins))
 
 	authRepo := repository.NewPgxAuthRepository(pool)
-	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv)
+	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv, cfg.GoogleClientID, service.NewHTTPGoogleTokenVerifier())
 	authHandler := handler.NewAuthHandler(authSvc)
 
 	discoveryRepo := repository.NewPgxDiscoveryRepository(pool)
@@ -128,6 +128,7 @@ func main() {
 	authGroup.Post("/register", authHandler.Register)
 	authGroup.Post("/register/verify-otp", authHandler.VerifyRegistrationOTP)
 	authGroup.Post("/login", authHandler.Login)
+	authGroup.Post("/google", authHandler.GoogleLogin)
 
 	v1.Get("/auth/me", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.Me)
 	v1.Patch("/auth/profile", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra, domain.RoleAdminHQ), authHandler.UpdateProfile)

@@ -5,11 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net/http"
 	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -28,19 +31,67 @@ const (
 	minPassword  = 6
 )
 
-// AuthService handles registration OTP, credential login, profile updates, and gate PIN auth.
+// GoogleTokenVerifier verifies a Google OAuth ID token and returns its claims.
+type GoogleTokenVerifier interface {
+	VerifyIDToken(ctx context.Context, idToken string) (domain.GoogleTokenClaims, error)
+}
+
+// HTTPGoogleTokenVerifier calls Google's OAuth2 tokeninfo endpoint.
+type HTTPGoogleTokenVerifier struct {
+	client *http.Client
+}
+
+// NewHTTPGoogleTokenVerifier creates a GoogleTokenVerifier with a 5-second timeout.
+func NewHTTPGoogleTokenVerifier() *HTTPGoogleTokenVerifier {
+	return &HTTPGoogleTokenVerifier{
+		client: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (v *HTTPGoogleTokenVerifier) VerifyIDToken(ctx context.Context, idToken string) (domain.GoogleTokenClaims, error) {
+	endpoint := "https://oauth2.googleapis.com/tokeninfo?id_token=" + url.QueryEscape(idToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return domain.GoogleTokenClaims{}, fmt.Errorf("build google tokeninfo request: %w", err)
+	}
+
+	resp, err := v.client.Do(req)
+	if err != nil {
+		return domain.GoogleTokenClaims{}, fmt.Errorf("request google tokeninfo: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.GoogleTokenClaims{}, domain.ErrUnauthorized
+	}
+
+	var claims domain.GoogleTokenClaims
+	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
+		return domain.GoogleTokenClaims{}, domain.ErrUnauthorized
+	}
+	return claims, nil
+}
+
+// AuthService handles registration OTP, credential login, Google OAuth, profile updates, and gate PIN auth.
 type AuthService struct {
-	repo      repository.AuthRepository
-	jwtSecret string
-	isDev     bool
+	repo           repository.AuthRepository
+	jwtSecret      string
+	googleClientID string
+	googleVerifier GoogleTokenVerifier
+	isDev          bool
 }
 
 // NewAuthService constructs an AuthService.
-func NewAuthService(repo repository.AuthRepository, jwtSecret string, appEnv string) *AuthService {
+func NewAuthService(repo repository.AuthRepository, jwtSecret, appEnv, googleClientID string, verifier GoogleTokenVerifier) *AuthService {
+	if verifier == nil {
+		verifier = NewHTTPGoogleTokenVerifier()
+	}
 	return &AuthService{
-		repo:      repo,
-		jwtSecret: jwtSecret,
-		isDev:     strings.EqualFold(appEnv, "development"),
+		repo:           repo,
+		jwtSecret:      jwtSecret,
+		googleClientID: googleClientID,
+		googleVerifier: verifier,
+		isDev:          strings.EqualFold(appEnv, "development"),
 	}
 }
 
@@ -181,9 +232,66 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (domai
 		return domain.AuthTokenResponse{}, err
 	}
 
+	profile, err := s.enrichUserProfile(ctx, user)
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
 	return domain.AuthTokenResponse{
 		AccessToken: token,
-		User:        toUserProfile(user),
+		User:        profile,
+	}, nil
+}
+
+// GoogleLogin verifies a Google idToken and signs in or provisions the user account.
+func (s *AuthService) GoogleLogin(ctx context.Context, req domain.GoogleLoginRequest) (domain.AuthTokenResponse, error) {
+	idToken := strings.TrimSpace(req.IDToken)
+	if idToken == "" {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrValidation, "VALIDATION_ERROR", "idToken Google wajib diisi.", nil)
+	}
+	if s.googleClientID == "" {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrUnauthorized, "GOOGLE_OAUTH_NOT_CONFIGURED", "Login Google belum dikonfigurasi di server.", nil)
+	}
+
+	claims, err := s.googleVerifier.VerifyIDToken(ctx, idToken)
+	if err != nil {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrUnauthorized, "INVALID_GOOGLE_TOKEN", "Token Google tidak valid atau telah kedaluwarsa.", nil)
+	}
+
+	email := strings.ToLower(strings.TrimSpace(claims.Email))
+	if claims.Aud != s.googleClientID || !strings.EqualFold(claims.EmailVerified, "true") || email == "" {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrUnauthorized, "INVALID_GOOGLE_CLAIMS", "Klaim akun Google tidak valid atau email belum terverifikasi.", nil)
+	}
+
+	user, err := s.repo.FindUserByEmail(ctx, email)
+	if errors.Is(err, domain.ErrNotFound) {
+		fullName := strings.TrimSpace(claims.Name)
+		if fullName == "" {
+			fullName = strings.Split(email, "@")[0]
+		}
+		placeholderHex, hexErr := randomHexUpper(7)
+		if hexErr != nil {
+			return domain.AuthTokenResponse{}, fmt.Errorf("generate google placeholder phone: %w", hexErr)
+		}
+		user, err = s.repo.CreateGoogleUser(ctx, email, fullName, "g-"+placeholderHex)
+	}
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
+	token, err := s.issueToken(user.ID, user.Role, "", "")
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
+	profile, err := s.enrichUserProfile(ctx, user)
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
+	return domain.AuthTokenResponse{
+		AccessToken: token,
+		User:        profile,
 	}, nil
 }
 
@@ -196,7 +304,7 @@ func (s *AuthService) GetProfile(ctx context.Context, userID string) (domain.Use
 	if err != nil {
 		return domain.UserProfile{}, err
 	}
-	return toUserProfile(user), nil
+	return s.enrichUserProfile(ctx, user)
 }
 
 // UpdateProfile updates the authenticated user's fullName.
@@ -213,7 +321,19 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req doma
 	if err != nil {
 		return domain.UserProfile{}, err
 	}
-	return toUserProfile(user), nil
+	return s.enrichUserProfile(ctx, user)
+}
+
+func (s *AuthService) enrichUserProfile(ctx context.Context, user domain.UserRecord) (domain.UserProfile, error) {
+	profile := toUserProfile(user)
+	if user.Role == domain.RoleMitra {
+		venueIDs, err := s.repo.FindOwnedVenueIDs(ctx, user.ID)
+		if err != nil {
+			return domain.UserProfile{}, err
+		}
+		profile.OwnedVenueIDs = venueIDs
+	}
+	return profile, nil
 }
 
 // GateLogin authenticates gate staff using venueCode and a 6-digit PIN.

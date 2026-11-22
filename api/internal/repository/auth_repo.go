@@ -19,6 +19,8 @@ type AuthRepository interface {
 	GetLatestPendingOTP(ctx context.Context, email string) (domain.RegistrationOTP, error)
 	ActivateUserFromOTP(ctx context.Context, otpID string, otp domain.RegistrationOTP) (domain.UserRecord, error)
 	FindUserByEmail(ctx context.Context, email string) (domain.UserRecord, error)
+	CreateGoogleUser(ctx context.Context, email, fullName, placeholderPhone string) (domain.UserRecord, error)
+	FindOwnedVenueIDs(ctx context.Context, ownerID string) ([]string, error)
 	FindUserByID(ctx context.Context, userID string) (domain.UserRecord, error)
 	UpdateUserFullName(ctx context.Context, userID, fullName string) (domain.UserRecord, error)
 	FindActiveStaffByVenueCode(ctx context.Context, venueCode string) ([]domain.GateStaffRecord, error)
@@ -158,6 +160,53 @@ func (r *PgxAuthRepository) FindUserByEmail(ctx context.Context, email string) (
 		return domain.UserRecord{}, fmt.Errorf("find user by email: %w", err)
 	}
 	return user, nil
+}
+
+func (r *PgxAuthRepository) CreateGoogleUser(ctx context.Context, email, fullName, placeholderPhone string) (domain.UserRecord, error) {
+	var user domain.UserRecord
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO users (phone_number, full_name, email, role, is_verified)
+		VALUES ($1, $2, $3, 'TOURIST', TRUE)
+		ON CONFLICT (email) DO UPDATE SET
+			is_verified = TRUE,
+			updated_at = NOW()
+		RETURNING id::text, full_name, phone_number, COALESCE(email, ''), COALESCE(password_hash, ''), role::text, is_verified
+	`, placeholderPhone, fullName, email).Scan(
+		&user.ID,
+		&user.FullName,
+		&user.PhoneNumber,
+		&user.Email,
+		&user.PasswordHash,
+		&user.Role,
+		&user.IsVerified,
+	)
+	if err != nil {
+		return domain.UserRecord{}, fmt.Errorf("upsert google user: %w", err)
+	}
+	return user, nil
+}
+
+func (r *PgxAuthRepository) FindOwnedVenueIDs(ctx context.Context, ownerID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text
+		FROM venues
+		WHERE owner_id = $1::uuid
+		ORDER BY created_at ASC
+	`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("query owned venue ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan owned venue id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (r *PgxAuthRepository) FindUserByID(ctx context.Context, userID string) (domain.UserRecord, error) {

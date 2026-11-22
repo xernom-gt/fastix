@@ -61,6 +61,19 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	return response.OK(c, res, nil)
 }
 
+func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
+	var req domain.GoogleLoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.Fail(c, fiber.StatusBadRequest, "INVALID_JSON", "Format JSON tidak valid.", nil)
+	}
+
+	res, err := h.authSvc.GoogleLogin(c.UserContext(), req)
+	if err != nil {
+		return handleDomainError(c, err)
+	}
+	return response.OK(c, res, nil)
+}
+
 func (h *AuthHandler) Me(c *fiber.Ctx) error {
 	claims, ok := middleware.GetAuthClaims(c)
 	if !ok {

@@ -11,18 +11,20 @@ import (
 )
 
 type stubAuthRepo struct {
-	usersByEmail map[string]domain.UserRecord
-	usersByID    map[string]domain.UserRecord
-	otpsByEmail  map[string]domain.RegistrationOTP
-	staffsByCode map[string][]domain.GateStaffRecord
+	usersByEmail  map[string]domain.UserRecord
+	usersByID     map[string]domain.UserRecord
+	otpsByEmail   map[string]domain.RegistrationOTP
+	staffsByCode  map[string][]domain.GateStaffRecord
+	ownedVenuesBy map[string][]string
 }
 
 func newStubAuthRepo() *stubAuthRepo {
 	return &stubAuthRepo{
-		usersByEmail: map[string]domain.UserRecord{},
-		usersByID:    map[string]domain.UserRecord{},
-		otpsByEmail:  map[string]domain.RegistrationOTP{},
-		staffsByCode: map[string][]domain.GateStaffRecord{},
+		usersByEmail:  map[string]domain.UserRecord{},
+		usersByID:     map[string]domain.UserRecord{},
+		otpsByEmail:   map[string]domain.RegistrationOTP{},
+		staffsByCode:  map[string][]domain.GateStaffRecord{},
+		ownedVenuesBy: map[string][]string{},
 	}
 }
 
@@ -72,6 +74,24 @@ func (r *stubAuthRepo) FindUserByEmail(_ context.Context, email string) (domain.
 	return u, nil
 }
 
+func (r *stubAuthRepo) CreateGoogleUser(_ context.Context, email, fullName, placeholderPhone string) (domain.UserRecord, error) {
+	u := domain.UserRecord{
+		ID:          "usr-google-1",
+		FullName:    fullName,
+		PhoneNumber: placeholderPhone,
+		Email:       email,
+		Role:        domain.RoleTourist,
+		IsVerified:  true,
+	}
+	r.usersByEmail[email] = u
+	r.usersByID[u.ID] = u
+	return u, nil
+}
+
+func (r *stubAuthRepo) FindOwnedVenueIDs(_ context.Context, ownerID string) ([]string, error) {
+	return r.ownedVenuesBy[ownerID], nil
+}
+
 func (r *stubAuthRepo) FindUserByID(_ context.Context, userID string) (domain.UserRecord, error) {
 	u, ok := r.usersByID[userID]
 	if !ok {
@@ -97,7 +117,7 @@ func (r *stubAuthRepo) FindActiveStaffByVenueCode(_ context.Context, venueCode s
 
 func TestRegisterVerifyLoginUpdateProfile(t *testing.T) {
 	repo := newStubAuthRepo()
-	svc := NewAuthService(repo, "test-secret-key-123456", "development")
+	svc := NewAuthService(repo, "test-secret-key-123456", "development", "", nil)
 	ctx := context.Background()
 
 	regRes, err := svc.Register(ctx, domain.RegisterRequest{
@@ -173,7 +193,7 @@ func TestGateLogin(t *testing.T) {
 		},
 	}
 
-	svc := NewAuthService(repo, "test-secret-key-123456", "production")
+	svc := NewAuthService(repo, "test-secret-key-123456", "production", "", nil)
 	res, err := svc.GateLogin(context.Background(), domain.GateLoginRequest{
 		VenueCode: "loka-0315",
 		Pin:       "482910",
@@ -190,5 +210,89 @@ func TestGateLogin(t *testing.T) {
 		Pin:       "999999",
 	}); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized for wrong PIN, got %v", err)
+	}
+}
+
+type stubGoogleVerifier struct {
+	claims domain.GoogleTokenClaims
+	err    error
+}
+
+func (v *stubGoogleVerifier) VerifyIDToken(_ context.Context, _ string) (domain.GoogleTokenClaims, error) {
+	return v.claims, v.err
+}
+
+func TestGoogleLoginValidationAndMitraVenues(t *testing.T) {
+	const clientID = "1234567890-test.apps.googleusercontent.com"
+	repo := newStubAuthRepo()
+	ctx := context.Background()
+
+	// Wrong aud -> 401
+	wrongAudSvc := NewAuthService(repo, "test-secret-key-123456", "production", clientID, &stubGoogleVerifier{
+		claims: domain.GoogleTokenClaims{
+			Aud:           "other-client-id",
+			Email:         "wisatawan@gmail.com",
+			EmailVerified: "true",
+			Name:          "Raka Pratama",
+		},
+	})
+	if _, err := wrongAudSvc.GoogleLogin(ctx, domain.GoogleLoginRequest{IDToken: "tok-1"}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized for aud mismatch, got %v", err)
+	}
+
+	// Unverified email -> 401
+	unverifiedSvc := NewAuthService(repo, "test-secret-key-123456", "production", clientID, &stubGoogleVerifier{
+		claims: domain.GoogleTokenClaims{
+			Aud:           clientID,
+			Email:         "wisatawan@gmail.com",
+			EmailVerified: "false",
+			Name:          "Raka Pratama",
+		},
+	})
+	if _, err := unverifiedSvc.GoogleLogin(ctx, domain.GoogleLoginRequest{IDToken: "tok-2"}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized for unverified email, got %v", err)
+	}
+
+	// Valid tourist token provisions a new TOURIST user
+	touristSvc := NewAuthService(repo, "test-secret-key-123456", "production", clientID, &stubGoogleVerifier{
+		claims: domain.GoogleTokenClaims{
+			Aud:           clientID,
+			Email:         "wisatawan@gmail.com",
+			EmailVerified: "true",
+			Name:          "Raka Pratama",
+		},
+	})
+	touristRes, err := touristSvc.GoogleLogin(ctx, domain.GoogleLoginRequest{IDToken: "tok-3"})
+	if err != nil {
+		t.Fatalf("GoogleLogin tourist: %v", err)
+	}
+	if touristRes.AccessToken == "" || touristRes.User.Role != domain.RoleTourist || touristRes.User.FullName != "Raka Pratama" {
+		t.Fatalf("unexpected tourist google login response: %+v", touristRes)
+	}
+
+	// Existing MITRA owner receives ownedVenueIds
+	repo.usersByEmail["bagus@tirtagangga.id"] = domain.UserRecord{
+		ID:         "owner-1",
+		FullName:   "Bagus Mahendra",
+		Email:      "bagus@tirtagangga.id",
+		Role:       domain.RoleMitra,
+		IsVerified: true,
+	}
+	repo.ownedVenuesBy["owner-1"] = []string{"v-tirta-gangga", "v-prambanan"}
+
+	mitraSvc := NewAuthService(repo, "test-secret-key-123456", "production", clientID, &stubGoogleVerifier{
+		claims: domain.GoogleTokenClaims{
+			Aud:           clientID,
+			Email:         "bagus@tirtagangga.id",
+			EmailVerified: "true",
+			Name:          "Bagus Mahendra",
+		},
+	})
+	mitraRes, err := mitraSvc.GoogleLogin(ctx, domain.GoogleLoginRequest{IDToken: "tok-4"})
+	if err != nil {
+		t.Fatalf("GoogleLogin mitra: %v", err)
+	}
+	if mitraRes.User.Role != domain.RoleMitra || len(mitraRes.User.OwnedVenueIDs) != 2 {
+		t.Fatalf("expected MITRA role with 2 ownedVenueIds, got %+v", mitraRes.User)
 	}
 }

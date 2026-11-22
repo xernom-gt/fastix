@@ -24,11 +24,25 @@ type AuthClaims struct {
 
 // UserProfile represents the public user object returned by auth endpoints.
 type UserProfile struct {
-	ID          string `json:"id"`
-	FullName    string `json:"fullName"`
-	PhoneNumber string `json:"phoneNumber"`
-	Email       string `json:"email"`
-	Role        string `json:"role"`
+	ID            string   `json:"id"`
+	FullName      string   `json:"fullName"`
+	PhoneNumber   string   `json:"phoneNumber"`
+	Email         string   `json:"email"`
+	Role          string   `json:"role"`
+	OwnedVenueIDs []string `json:"ownedVenueIds,omitempty"`
+}
+
+// GoogleLoginRequest is the input for POST /api/v1/auth/google.
+type GoogleLoginRequest struct {
+	IDToken string `json:"idToken"`
+}
+
+// GoogleTokenClaims represents verified claims from Google's tokeninfo endpoint.
+type GoogleTokenClaims struct {
+	Aud           string `json:"aud"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	Name          string `json:"name"`
 }
 
 // UserRecord holds persisted user fields including credentials.
