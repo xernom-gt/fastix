@@ -273,8 +273,8 @@ export default function LoginPage() {
       {/* Right Form Panel (50% Crisp White) */}
       <div className="flex flex-col justify-center items-center px-6 py-10 sm:px-12">
         <div className="fx-fade-up w-full max-w-sm space-y-6">
-          {/* Top Brand + Back Pill */}
-          <div className="flex items-center justify-between">
+          {/* Top Brand */}
+          <div className="flex items-center">
             <Link to="/explore" className="flex items-center gap-2 text-[#111827]">
               <span className="w-8 h-8 rounded-xl bg-[#111827] text-white flex items-center justify-center">
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
@@ -282,14 +282,6 @@ export default function LoginPage() {
                 </span>
               </span>
               <span className="font-extrabold text-xl tracking-tight">Fastix</span>
-            </Link>
-
-            <Link
-              to="/explore"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 hover:bg-gray-200 text-xs font-semibold text-[#111827] transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-[#111827]" aria-hidden="true" />
-              <span>ID</span>
             </Link>
           </div>
 
