@@ -1,3 +1,5 @@
+import type { TicketProduct } from '@pariwisloka/shared';
+
 export interface StaffGateAccount {
   id: string;
   name: string;
@@ -43,7 +45,7 @@ export interface BalanceMutation {
   createdAt: string;
 }
 
-export type PayoutStatus = 'PROCESSING' | 'COMPLETED' | 'FAILED';
+export type PayoutStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'COMPLETED' | 'FAILED';
 
 export interface PayoutRecord {
   id: string;
@@ -56,10 +58,192 @@ export interface PayoutRecord {
   accountHolder: string;
   status: PayoutStatus;
   createdAt: string;
+  transferredAt?: string;
 }
 
 export const DISBURSEMENT_BANK_ADMIN_FEE = 6500;
 export const MIN_PAYOUT_AMOUNT = 50000;
+
+export const AUTH_TOKEN_STORAGE_KEY = 'fastix_auth_token_v1';
+const RAW_API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:8080/api/v1';
+export const API_BASE_URL = RAW_API_URL.replace(/\/+$/, '');
+
+export interface MitraVenueDTO {
+  id: string;
+  venueCode: string;
+  nama: string;
+  kotaKode: string;
+  isPublished: boolean;
+  tickets: TicketProduct[];
+}
+
+export interface CreateTicketRequest {
+  venueId: string;
+  title: string;
+  description: string;
+  price: number;
+  dailyQuota: number;
+}
+
+export interface UpdateTicketRequest {
+  title?: string;
+  description?: string;
+  price?: number;
+  dailyQuota?: number;
+  isActive?: boolean;
+}
+
+export interface MitraStaffDTO {
+  id: string;
+  venueId: string;
+  venueCode: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface CreateStaffRequest {
+  venueId: string;
+  name: string;
+  pin: string;
+}
+
+export interface UpdateStaffRequest {
+  pin?: string;
+  isActive?: boolean;
+}
+
+export interface BalanceMutationDTO {
+  id: string;
+  amount: number;
+  type: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface PayoutDTO {
+  id: string;
+  amount: number;
+  adminFee: number;
+  netAmount: number;
+  bankCode: string;
+  bankAccountNumber: string;
+  bankAccountName: string;
+  status: string;
+  createdAt: string;
+  transferredAt?: string;
+}
+
+export interface MitraFinanceSummary {
+  holdingPlatformBalance: number;
+  pendingBalance: number;
+  availableBalance: number;
+  refundedCount: number;
+  mutations: BalanceMutationDTO[];
+  payouts: PayoutDTO[];
+}
+
+export interface CreatePayoutRequest {
+  amount: number;
+}
+
+export function getFastixAuthToken(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+interface ApiEnvelope<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+  meta?: {
+    total?: number;
+    timestamp?: string;
+  };
+}
+
+export async function mitraApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getFastixAuthToken();
+  const headers = new Headers(options.headers);
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
+
+  const json = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (!response.ok || !json?.success) {
+    const errorMsg = json?.error?.message || `Permintaan ke server gagal (${response.status})`;
+    throw new Error(errorMsg);
+  }
+
+  return json.data as T;
+}
+
+export async function apiFetchMitraVenues(): Promise<MitraVenueDTO[]> {
+  return mitraApiRequest<MitraVenueDTO[]>('/mitra/venues');
+}
+
+export async function apiCreateMitraTicket(req: CreateTicketRequest): Promise<TicketProduct> {
+  return mitraApiRequest<TicketProduct>('/mitra/tickets', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function apiUpdateMitraTicket(
+  ticketId: string,
+  req: UpdateTicketRequest,
+): Promise<TicketProduct> {
+  return mitraApiRequest<TicketProduct>(`/mitra/tickets/${encodeURIComponent(ticketId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function apiFetchMitraStaffs(): Promise<MitraStaffDTO[]> {
+  return mitraApiRequest<MitraStaffDTO[]>('/mitra/staffs');
+}
+
+export async function apiCreateMitraStaff(req: CreateStaffRequest): Promise<MitraStaffDTO> {
+  return mitraApiRequest<MitraStaffDTO>('/mitra/staffs', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function apiUpdateMitraStaff(
+  staffId: string,
+  req: UpdateStaffRequest,
+): Promise<MitraStaffDTO> {
+  return mitraApiRequest<MitraStaffDTO>(`/mitra/staffs/${encodeURIComponent(staffId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function apiFetchMitraFinance(): Promise<MitraFinanceSummary> {
+  return mitraApiRequest<MitraFinanceSummary>('/mitra/finance');
+}
+
+export async function apiCreatePayout(amount: number): Promise<PayoutDTO> {
+  return mitraApiRequest<PayoutDTO>('/mitra/payouts', {
+    method: 'POST',
+    body: JSON.stringify({ amount }),
+  });
+}
 
 const STAFFS_STORAGE_KEY = 'fastix_mitra_staffs_v1';
 const OFFLINE_QUEUE_STORAGE_KEY = 'fastix_gate_offline_queue_v1';
@@ -81,72 +265,6 @@ const KYB_BANK_ACCOUNTS: Record<string, BankAccountKYB> = {
     isVerifiedKYB: true,
   },
 };
-
-const DEFAULT_MUTATIONS: BalanceMutation[] = [
-  {
-    id: 'mut_seed_01',
-    venueId: 'tirta-gangga',
-    type: 'HOLDING_RELEASED',
-    amount: 2450000,
-    grossAmount: 2625000,
-    platformFee: 175000,
-    description: 'Rilis escrow H+1 tiket check-in 15 Nov (70 tiket redeemed)',
-    createdAt: '2026-11-16T23:59:00+07:00',
-  },
-  {
-    id: 'mut_seed_02',
-    venueId: 'tirta-gangga',
-    type: 'PAYOUT_WITHDRAW',
-    amount: -1000000,
-    description: 'Penarikan dana ke Bank Mandiri ****3041',
-    createdAt: '2026-11-16T14:20:00+07:00',
-  },
-  {
-    id: 'mut_seed_03',
-    venueId: 'tirta-gangga',
-    type: 'PAYIN_INFLOW',
-    amount: 945000,
-    grossAmount: 1020000,
-    platformFee: 75000,
-    description: 'Tiket berhasil check-in di gate (masa tahan H+1)',
-    createdAt: '2026-11-17T07:45:00+07:00',
-  },
-  {
-    id: 'mut_seed_04',
-    venueId: 'candi-prambanan',
-    type: 'HOLDING_RELEASED',
-    amount: 3800000,
-    grossAmount: 4000000,
-    platformFee: 200000,
-    description: 'Rilis escrow H+1 tiket check-in 15 Nov (80 tiket redeemed)',
-    createdAt: '2026-11-16T23:59:00+07:00',
-  },
-  {
-    id: 'mut_seed_05',
-    venueId: 'tirta-gangga',
-    type: 'REFUND_AUTO',
-    amount: 0,
-    grossAmount: 37500,
-    platformFee: 0,
-    description: 'Tiket PWL-TIX-7D2E9F10 - Tiket Kadaluarsa & Di-refund Otomatis',
-    createdAt: '2026-11-15T00:01:00+07:00',
-  },
-];
-
-const DEFAULT_PAYOUTS: PayoutRecord[] = [
-  {
-    id: 'pay_seed_01',
-    venueId: 'tirta-gangga',
-    amountRequested: 1000000,
-    bankAdminFee: DISBURSEMENT_BANK_ADMIN_FEE,
-    netReceived: 1000000 - DISBURSEMENT_BANK_ADMIN_FEE,
-    bankName: 'Bank Mandiri',
-    accountNumber: '1450018293041',
-    accountHolder: 'Yayasan Pengelola Tirta Gangga',
-    status: 'COMPLETED',
-    createdAt: '2026-11-16T14:20:00+07:00',
-  },
-];
 
 const DEFAULT_STAFFS: StaffGateAccount[] = [
   {
@@ -222,21 +340,7 @@ export function getVerifiedBankAccount(venueId: string): BankAccountKYB {
 }
 
 export function loadBalanceMutations(): BalanceMutation[] {
-  const list = readJson<BalanceMutation[]>(MUTATIONS_STORAGE_KEY, DEFAULT_MUTATIONS);
-  if (!list.some((m) => m.type === 'REFUND_AUTO')) {
-    const refundSeed: BalanceMutation = {
-      id: 'mut_seed_05',
-      venueId: 'tirta-gangga',
-      type: 'REFUND_AUTO',
-      amount: 0,
-      grossAmount: 37500,
-      platformFee: 0,
-      description: 'Tiket PWL-TIX-7D2E9F10 - Tiket Kadaluarsa & Di-refund Otomatis',
-      createdAt: '2026-11-15T00:01:00+07:00',
-    };
-    return [...list, refundSeed];
-  }
-  return list;
+  return readJson<BalanceMutation[]>(MUTATIONS_STORAGE_KEY, []);
 }
 
 export function saveBalanceMutations(mutations: BalanceMutation[]): void {
@@ -244,7 +348,7 @@ export function saveBalanceMutations(mutations: BalanceMutation[]): void {
 }
 
 export function loadPayoutHistory(): PayoutRecord[] {
-  return readJson<PayoutRecord[]>(PAYOUTS_STORAGE_KEY, DEFAULT_PAYOUTS);
+  return readJson<PayoutRecord[]>(PAYOUTS_STORAGE_KEY, []);
 }
 
 export function savePayoutHistory(payouts: PayoutRecord[]): void {
