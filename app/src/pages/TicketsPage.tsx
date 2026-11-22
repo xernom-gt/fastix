@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   formatRupiah,
@@ -32,7 +32,13 @@ export default function TicketsPage() {
   const { ticketCode } = useParams<{ ticketCode: string }>();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { tickets, transactions } = useBookings();
+  const { tickets, transactions, refreshTickets } = useBookings();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      void refreshTickets();
+    }
+  }, [isAuthenticated, refreshTickets]);
 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | RedemptionStatus>('ALL');

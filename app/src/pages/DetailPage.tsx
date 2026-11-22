@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { formatRupiah, getTodayISO } from '@pariwisloka/shared';
 import { BookingStepper } from '../components/BookingStepper';
@@ -12,14 +12,20 @@ export default function DetailPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { createCheckout, getExtraUsedQuota, getVenueById } = useBookings();
+  const { createCheckout, fetchVenueDetail, getExtraUsedQuota, getVenueById } = useBookings();
 
   const venue = id ? getVenueById(id) : undefined;
 
   const [bookingDate, setBookingDate] = useState(searchParams.get('tanggal') ?? getTodayISO());
   const [selectedTicketId, setSelectedTicketId] = useState(venue?.tickets[0]?.id ?? '');
   const [quantity, setQuantity] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (!id) return;
+    void fetchVenueDetail(id, bookingDate);
+  }, [id, bookingDate, fetchVenueDetail]);
 
   if (!venue) {
     return (
@@ -49,7 +55,7 @@ export default function DetailPage() {
   const platformFee = PLATFORM_FEE_PER_TICKET * quantity;
   const totalAmount = subtotal + platformFee;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     setErrorMsg('');
     if (!isAuthenticated) {
       navigate(`/login?redirect=${encodeURIComponent(`/destinasi/${venue.id}?tanggal=${bookingDate}`)}`);
@@ -59,13 +65,22 @@ export default function DetailPage() {
       setErrorMsg('Kuota tiket untuk tanggal yang dipilih tidak mencukupi.');
       return;
     }
-    const tx = createCheckout({
-      venue,
-      ticket: activeTicket,
-      bookingDate,
-      quantity,
-    });
-    navigate(`/checkout/${tx.id}`);
+    setIsSubmitting(true);
+    try {
+      const tx = await createCheckout({
+        venue,
+        ticket: activeTicket,
+        bookingDate,
+        quantity,
+      });
+      navigate(`/checkout/${tx.id}`);
+    } catch (err: unknown) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Gagal membuat pesanan. Silakan coba lagi.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -274,15 +289,17 @@ export default function DetailPage() {
 
           <button
             type="button"
-            disabled={remainingQuota === 0}
+            disabled={remainingQuota === 0 || isSubmitting}
             onClick={handleCheckout}
             className="w-full py-3.5 px-4 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors disabled:opacity-40"
           >
-            {remainingQuota === 0
-              ? 'Kuota Tanggal Ini Habis'
-              : isAuthenticated
-                ? 'Pesan & Bayar via QRIS'
-                : 'Masuk untuk Pesan Tiket'}
+            {isSubmitting
+              ? 'Membuat Invoice...'
+              : remainingQuota === 0
+                ? 'Kuota Tanggal Ini Habis'
+                : isAuthenticated
+                  ? 'Pesan & Bayar via QRIS'
+                  : 'Masuk untuk Pesan Tiket'}
           </button>
 
           {/* Ketentuan ringkas dalam Accordion */}

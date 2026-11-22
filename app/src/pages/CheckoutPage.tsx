@@ -33,13 +33,26 @@ export default function CheckoutPage() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
-  const { transactions, simulateWebhookPaid, cancelTransaction, expireTransaction } = useBookings();
+  const {
+    transactions,
+    fetchBooking,
+    simulateWebhookPaid,
+    cancelTransaction,
+    expireTransaction,
+  } = useBookings();
 
-  const tx = transactions.find((t) => t.id === invoiceId);
+  const tx = transactions.find((t) => t.id === invoiceId || t.invoiceNumber === invoiceId);
+  const [isPaying, setIsPaying] = useState(false);
+  const [payError, setPayError] = useState('');
   const [secondsLeft, setSecondsLeft] = useState<number>(() => {
     if (!tx) return 0;
     return Math.max(0, Math.floor((new Date(tx.expiredAt).getTime() - Date.now()) / 1000));
   });
+
+  useEffect(() => {
+    if (!invoiceId || !isAuthenticated) return;
+    void fetchBooking(invoiceId);
+  }, [invoiceId, isAuthenticated, fetchBooking]);
 
   useEffect(() => {
     if (!tx || tx.paymentStatus !== 'PENDING') return;
@@ -73,12 +86,22 @@ export default function CheckoutPage() {
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const ss = String(secondsLeft % 60).padStart(2, '0');
 
-  const handleSimulatePaid = () => {
-    const issued = simulateWebhookPaid(tx.id, user.fullName);
-    if (issued.length > 0) {
-      navigate(`/tiket/${issued[0].ticketCode}`);
-    } else {
-      navigate('/tiket');
+  const handleSimulatePaid = async () => {
+    setPayError('');
+    setIsPaying(true);
+    try {
+      const issued = await simulateWebhookPaid(tx.id, user.fullName);
+      if (issued.length > 0) {
+        navigate(`/tiket/${issued[0].ticketCode}`);
+      } else {
+        navigate('/tiket');
+      }
+    } catch (err: unknown) {
+      setPayError(
+        err instanceof Error ? err.message : 'Gagal memproses pembayaran. Silakan coba lagi.',
+      );
+    } finally {
+      setIsPaying(false);
     }
   };
 
@@ -182,17 +205,24 @@ export default function CheckoutPage() {
               <p className="text-xs font-bold text-gray-700">
                 Konfirmasi Pembayaran
               </p>
+              {payError && (
+                <p role="alert" className="text-xs font-semibold text-red-800 bg-red-50 border border-red-200 px-3 py-2 rounded-xl">
+                  {payError}
+                </p>
+              )}
               <button
                 type="button"
+                disabled={isPaying}
                 onClick={handleSimulatePaid}
-                className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors"
+                className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
               >
-                Bayar Sekarang (Demo)
+                {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang (Demo)'}
               </button>
               <button
                 type="button"
+                disabled={isPaying}
                 onClick={() => cancelTransaction(tx.id)}
-                className="w-full py-2.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold transition-colors"
+                className="w-full py-2.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-700 text-xs font-bold transition-colors"
               >
                 Batalkan Pesanan
               </button>

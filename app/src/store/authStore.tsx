@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import {
+  apiGet,
+  apiPatch,
+  apiPost,
+  ApiClientError,
+  getAuthToken,
+  setAuthToken,
+} from '../services/apiClient';
 
 export interface CustomerUser {
   id: string;
@@ -9,81 +17,44 @@ export interface CustomerUser {
   ownedVenueIds?: string[];
 }
 
-export interface RegisteredUser {
+interface BackendUserProfile {
   id: string;
   fullName: string;
   phoneNumber: string;
   email: string;
-  password: string;
-  role: 'CUSTOMER' | 'OWNER';
-  ownedVenueIds?: string[];
-  createdAt: string;
+  role: string;
+}
+
+interface AuthTokenResponse {
+  accessToken: string;
+  user: BackendUserProfile;
+}
+
+export interface RegisterOtpInfo {
+  email: string;
+  expiresInSeconds: number;
+  devOtp?: string;
 }
 
 interface AuthContextValue {
   user: CustomerUser | null;
   isAuthenticated: boolean;
-  loginWithPhone: (phoneNumber: string, fullName: string) => void;
-  loginWithCredentials: (email: string, password: string) => CustomerUser;
-  registerCustomer: (data: {
+  loginWithCredentials: (email: string, password: string) => Promise<CustomerUser>;
+  requestRegistration: (data: {
     fullName: string;
     phoneNumber: string;
     email: string;
     password: string;
-  }) => CustomerUser;
-  updateProfile: (data: { fullName: string }) => CustomerUser | undefined;
+  }) => Promise<RegisterOtpInfo>;
+  verifyRegistrationOtp: (email: string, otpCode: string) => Promise<CustomerUser>;
+  updateProfile: (data: { fullName: string }) => Promise<CustomerUser | undefined>;
   loginWithGoogle: (email?: string) => CustomerUser;
   loginAsDemoOwner: () => void;
   upgradeToOwner: (venueIds?: string[]) => void;
   logout: () => void;
 }
 
-const REGISTERED_USERS_KEY = 'fastix_registered_users_v1';
-
-const DEFAULT_REGISTERED_USERS: RegisteredUser[] = [
-  {
-    id: 'usr_reg_001',
-    fullName: 'Raka Pratama',
-    phoneNumber: '081234567890',
-    email: 'raka.pratama@gmail.com',
-    password: 'password123',
-    role: 'CUSTOMER',
-    createdAt: '2026-11-01T00:00:00.000Z',
-  },
-  {
-    id: 'usr_owner_tirta',
-    fullName: 'Anak Agung Bagus',
-    phoneNumber: '081238889900',
-    email: 'bagus@tirtagangga.id',
-    password: 'password123',
-    role: 'OWNER',
-    ownedVenueIds: ['tirta-gangga'],
-    createdAt: '2026-11-01T00:00:00.000Z',
-  },
-];
-
-function loadRegisteredUsers(): RegisteredUser[] {
-  try {
-    const raw = localStorage.getItem(REGISTERED_USERS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as RegisteredUser[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch {
-    // fallback to defaults
-  }
-  return DEFAULT_REGISTERED_USERS;
-}
-
-function saveRegisteredUsers(users: RegisteredUser[]) {
-  try {
-    localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
-  } catch {
-    // ignore storage write errors
-  }
-}
+const STORAGE_KEY = 'fastix_customer_session_v1';
 
 const REGISTERED_OWNER_GOOGLE_ACCOUNTS: Record<
   string,
@@ -98,7 +69,17 @@ const REGISTERED_OWNER_GOOGLE_ACCOUNTS: Record<
   },
 };
 
-const STORAGE_KEY = 'fastix_customer_session_v1';
+function mapBackendUser(profile: BackendUserProfile): CustomerUser {
+  const isOwner = profile.role === 'MITRA' || profile.role === 'OWNER';
+  return {
+    id: profile.id,
+    fullName: profile.fullName,
+    phoneNumber: profile.phoneNumber,
+    email: profile.email,
+    role: isOwner ? 'OWNER' : 'CUSTOMER',
+    ownedVenueIds: isOwner ? ['tirta-gangga'] : undefined,
+  };
+}
 
 function loadSession(): CustomerUser | null {
   try {
@@ -116,111 +97,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const saveUser = (next: CustomerUser | null) => {
     setUser(next);
-    if (next) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  };
-
-  const loginWithPhone = (phoneNumber: string, fullName: string) => {
-    saveUser({
-      id: `usr_${phoneNumber.replace(/\D/g, '').slice(-6) || '001'}`,
-      fullName: fullName.trim() || 'Wisatawan Fastix',
-      phoneNumber: phoneNumber.trim(),
-      role: 'CUSTOMER',
-    });
-  };
-
-  const loginWithCredentials = (email: string, password: string): CustomerUser => {
-    const users = loadRegisteredUsers();
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const matched = users.find(
-      (u) => u.email.toLowerCase() === normalizedEmail && u.password === password,
-    );
-
-    if (!matched) {
-      const emailExists = users.some((u) => u.email.toLowerCase() === normalizedEmail);
-      if (emailExists) {
-        throw new Error('Kata sandi salah. Silakan periksa kembali.');
+    try {
+      if (next) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
       }
-      throw new Error('Akun tidak ditemukan. Silakan periksa alamat email atau daftar akun baru.');
+    } catch {
+      // ignore storage errors
     }
-
-    const customerUser: CustomerUser = {
-      id: matched.id,
-      fullName: matched.fullName,
-      phoneNumber: matched.phoneNumber,
-      email: matched.email,
-      role: matched.role,
-      ownedVenueIds: matched.ownedVenueIds,
-    };
-
-    saveUser(customerUser);
-    return customerUser;
   };
 
-  const registerCustomer = (data: {
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    let cancelled = false;
+    apiGet<BackendUserProfile>('/auth/me')
+      .then(({ data }) => {
+        if (!cancelled && data) {
+          saveUser(mapBackendUser(data));
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof ApiClientError && err.status === 401) {
+          setAuthToken(null);
+          saveUser(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loginWithCredentials = async (email: string, password: string): Promise<CustomerUser> => {
+    const { data } = await apiPost<AuthTokenResponse>('/auth/login', {
+      email: email.trim(),
+      password,
+    });
+    setAuthToken(data.accessToken);
+    const mapped = mapBackendUser(data.user);
+    saveUser(mapped);
+    return mapped;
+  };
+
+  const requestRegistration = async (data: {
     fullName: string;
     phoneNumber: string;
     email: string;
     password: string;
-  }): CustomerUser => {
-    const users = loadRegisteredUsers();
-    const normalizedEmail = data.email.trim().toLowerCase();
-
-    const existing = users.find((u) => u.email.toLowerCase() === normalizedEmail);
-    if (existing) {
-      throw new Error('Email sudah terdaftar. Silakan gunakan email lain atau masuk ke akun Anda.');
-    }
-
-    const newUser: RegisteredUser = {
-      id: `usr_${Date.now()}`,
+  }): Promise<RegisterOtpInfo> => {
+    const { data: res } = await apiPost<RegisterOtpInfo>('/auth/register', {
       fullName: data.fullName.trim(),
       phoneNumber: data.phoneNumber.trim(),
-      email: normalizedEmail,
+      email: data.email.trim(),
       password: data.password,
-      role: 'CUSTOMER',
-      createdAt: new Date().toISOString(),
-    };
-
-    saveRegisteredUsers([...users, newUser]);
-
-    const customerUser: CustomerUser = {
-      id: newUser.id,
-      fullName: newUser.fullName,
-      phoneNumber: newUser.phoneNumber,
-      email: newUser.email,
-      role: newUser.role,
-    };
-
-    saveUser(customerUser);
-    return customerUser;
+    });
+    return res;
   };
 
-  const updateProfile = (data: { fullName: string }): CustomerUser | undefined => {
+  const verifyRegistrationOtp = async (email: string, otpCode: string): Promise<CustomerUser> => {
+    const { data } = await apiPost<AuthTokenResponse>('/auth/register/verify-otp', {
+      email: email.trim(),
+      otpCode: otpCode.trim(),
+    });
+    setAuthToken(data.accessToken);
+    const mapped = mapBackendUser(data.user);
+    saveUser(mapped);
+    return mapped;
+  };
+
+  const updateProfile = async (data: { fullName: string }): Promise<CustomerUser | undefined> => {
     if (!user) return undefined;
     const trimmed = data.fullName.trim();
     if (!trimmed) {
       throw new Error('Nama lengkap tidak boleh kosong.');
     }
 
-    const nextUser: CustomerUser = {
-      ...user,
-      fullName: trimmed,
-    };
-
-    saveUser(nextUser);
-
-    if (user.email) {
-      const users = loadRegisteredUsers();
-      const updatedList = users.map((u) =>
-        u.email.toLowerCase() === user.email?.toLowerCase() ? { ...u, fullName: trimmed } : u,
-      );
-      saveRegisteredUsers(updatedList);
+    if (getAuthToken()) {
+      const { data: updatedProfile } = await apiPatch<BackendUserProfile>('/auth/profile', {
+        fullName: trimmed,
+      });
+      const mapped = mapBackendUser(updatedProfile);
+      saveUser(mapped);
+      return mapped;
     }
 
+    const nextUser: CustomerUser = { ...user, fullName: trimmed };
+    saveUser(nextUser);
     return nextUser;
   };
 
@@ -229,10 +195,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const ownerProfile = REGISTERED_OWNER_GOOGLE_ACCOUNTS[normalizedEmail];
 
     const nextUser: CustomerUser = ownerProfile
-      ? {
-          ...ownerProfile,
-          role: 'OWNER',
-        }
+      ? { ...ownerProfile, role: 'OWNER' }
       : {
           id: 'usr_google_001',
           fullName: 'Raka Pratama',
@@ -264,16 +227,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const logout = () => saveUser(null);
+  const logout = () => {
+    setAuthToken(null);
+    saveUser(null);
+  };
 
   return (
     <AuthContext.Provider
       value={{
         user,
         isAuthenticated: Boolean(user),
-        loginWithPhone,
         loginWithCredentials,
-        registerCustomer,
+        requestRegistration,
+        verifyRegistrationOtp,
         updateProfile,
         loginWithGoogle,
         loginAsDemoOwner,

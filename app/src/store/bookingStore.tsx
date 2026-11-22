@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
   generateInvoiceNumber,
   generateMockSignatureHash,
@@ -7,26 +7,61 @@ import {
   MOCK_VENUES,
   type Destinasi,
   type ETicket,
+  type KategoriWisata,
   type TicketProduct,
   type Transaction,
 } from '@pariwisloka/shared';
+import { apiGet, apiPost, getAuthToken } from '../services/apiClient';
+import { useAuth } from './authStore';
 
 interface BookingState {
   transactions: Transaction[];
   tickets: ETicket[];
 }
 
+export interface VenueQueryParams {
+  q?: string;
+  kota?: string;
+  kategori?: string;
+  tanggal?: string;
+  sortBy?: string;
+  lat?: number;
+  lng?: number;
+}
+
+interface VenueSummaryDTO {
+  id: string;
+  venueCode: string;
+  nama: string;
+  kotaKode: string;
+  lokasi: string;
+  kategori: KategoriWisata;
+  hargaMulai: number;
+  rating: number;
+  jumlahUlasan: number;
+  gambarUrl: string;
+  gambarAlt: string;
+  distanceMeters?: number;
+  remainingQuota: number;
+  isPublished: boolean;
+}
+
 interface BookingContextValue extends BookingState {
   venues: Destinasi[];
+  venuesLoading: boolean;
   updateVenues: (next: Destinasi[]) => void;
+  refreshVenues: (params?: VenueQueryParams) => Promise<void>;
+  fetchVenueDetail: (venueId: string, tanggal?: string) => Promise<Destinasi | undefined>;
   getVenueById: (venueId: string) => Destinasi | undefined;
   createCheckout: (params: {
     venue: Destinasi;
     ticket: TicketProduct;
     bookingDate: string;
     quantity: number;
-  }) => Transaction;
-  simulateWebhookPaid: (transactionId: string, holderName: string) => ETicket[];
+  }) => Promise<Transaction>;
+  fetchBooking: (invoiceId: string) => Promise<Transaction | undefined>;
+  simulateWebhookPaid: (transactionId: string, holderName: string) => Promise<ETicket[]>;
+  refreshTickets: () => Promise<void>;
   redeemTicket: (ticketCode: string) => ETicket | null;
   cancelTransaction: (transactionId: string) => void;
   expireTransaction: (transactionId: string) => void;
@@ -202,32 +237,194 @@ function loadBookings(): BookingState {
   return applyAutoRefund(loaded);
 }
 
+function mergeVenueSummary(summary: VenueSummaryDTO, existing?: Destinasi): Destinasi {
+  const fallback =
+    existing ?? MOCK_VENUES.find((v) => v.id === summary.id || v.venueCode === summary.venueCode);
+
+  return {
+    id: summary.id,
+    venueCode: summary.venueCode,
+    nama: summary.nama,
+    kotaKode: summary.kotaKode,
+    lokasi: summary.lokasi,
+    alamat: fallback?.alamat ?? summary.lokasi,
+    jamBuka: fallback?.jamBuka ?? '08:00 - 17:00',
+    deskripsi: fallback?.deskripsi ?? '',
+    kategori: summary.kategori,
+    hargaMulai: summary.hargaMulai,
+    rating: summary.rating,
+    jumlahUlasan: summary.jumlahUlasan,
+    gambarUrl: summary.gambarUrl || fallback?.gambarUrl || '',
+    gambarAlt: summary.gambarAlt || fallback?.gambarAlt || summary.nama,
+    fasilitas: fallback?.fasilitas ?? [],
+    tickets: fallback?.tickets ?? [
+      {
+        id: `${summary.id}-default`,
+        venueId: summary.id,
+        title: 'Tiket Masuk Reguler',
+        description: 'Tiket masuk reguler destinasi wisata',
+        price: summary.hargaMulai,
+        dailyQuota: summary.remainingQuota,
+        usedQuotaPaid: 0,
+        usedQuotaPending: 0,
+      },
+    ],
+    koordinat: fallback?.koordinat ?? { lat: -7.7956, lng: 110.3695 },
+    isPublished: summary.isPublished,
+  };
+}
+
 const BookingContext = createContext<BookingContextValue | null>(null);
 
 const PLATFORM_FEE_PER_TICKET = 2500;
 
 export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated } = useAuth();
   const [state, setState] = useState<BookingState>(loadBookings);
   const [venues, setVenues] = useState<Destinasi[]>(loadVenues);
+  const [venuesLoading, setVenuesLoading] = useState(false);
 
-  const persist = (next: BookingState) => {
+  const persist = useCallback((next: BookingState) => {
     setState(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
-  const updateVenues = (next: Destinasi[]) => {
+  const updateVenues = useCallback((next: Destinasi[]) => {
     setVenues(next);
-    localStorage.setItem(VENUES_STORAGE_KEY, JSON.stringify(next));
-  };
+    try {
+      localStorage.setItem(VENUES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const refreshVenues = useCallback(
+    async (params: VenueQueryParams = {}) => {
+      setVenuesLoading(true);
+      try {
+        const query = new URLSearchParams();
+        if (params.q?.trim()) query.set('q', params.q.trim());
+        if (params.kota && params.kota !== 'all') query.set('kota', params.kota);
+        if (params.kategori && params.kategori !== 'all') query.set('kategori', params.kategori);
+        if (params.tanggal) query.set('tanggal', params.tanggal);
+        if (params.sortBy) query.set('sortBy', params.sortBy);
+        if (params.lat !== undefined && params.lng !== undefined) {
+          query.set('lat', String(params.lat));
+          query.set('lng', String(params.lng));
+        }
+
+        const qs = query.toString();
+        const { data } = await apiGet<VenueSummaryDTO[]>(`/venues${qs ? `?${qs}` : ''}`);
+        if (Array.isArray(data) && data.length > 0) {
+          setVenues((prev) => {
+            const merged = data.map((item) => {
+              const existing = prev.find(
+                (v) => v.id === item.id || v.venueCode === item.venueCode,
+              );
+              return mergeVenueSummary(item, existing);
+            });
+            try {
+              localStorage.setItem(VENUES_STORAGE_KEY, JSON.stringify(merged));
+            } catch {
+              // ignore storage errors
+            }
+            return merged;
+          });
+        }
+      } catch {
+        // Fallback smoothly to cached/mock venues when API is unreachable
+      } finally {
+        setVenuesLoading(false);
+      }
+    },
+    [],
+  );
+
+  const fetchVenueDetail = useCallback(
+    async (venueId: string, tanggal?: string): Promise<Destinasi | undefined> => {
+      const targetDate = tanggal || getTodayISO();
+      try {
+        const { data } = await apiGet<Destinasi>(
+          `/venues/${encodeURIComponent(venueId)}?tanggal=${encodeURIComponent(targetDate)}`,
+        );
+        if (data) {
+          setVenues((prev) => {
+            const exists = prev.some((v) => v.id === data.id);
+            const next = exists
+              ? prev.map((v) => (v.id === data.id ? data : v))
+              : [...prev, data];
+            try {
+              localStorage.setItem(VENUES_STORAGE_KEY, JSON.stringify(next));
+            } catch {
+              // ignore storage errors
+            }
+            return next;
+          });
+          return data;
+        }
+      } catch {
+        // Fallback to local venue
+      }
+      return venues.find((v) => v.id === venueId);
+    },
+    [venues],
+  );
+
+  const refreshTickets = useCallback(async () => {
+    if (!getAuthToken()) return;
+    try {
+      const { data } = await apiGet<ETicket[]>('/tickets');
+      if (Array.isArray(data)) {
+        setState((prev) => {
+          const next = { ...prev, tickets: data };
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          } catch {
+            // ignore storage errors
+          }
+          return next;
+        });
+      }
+    } catch {
+      // keep existing local tickets on network error
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshVenues();
+  }, [refreshVenues]);
+
+  useEffect(() => {
+    if (isAuthenticated && getAuthToken()) {
+      void refreshTickets();
+    }
+  }, [isAuthenticated, refreshTickets]);
 
   const getVenueById = (venueId: string) => venues.find((v) => v.id === venueId);
 
-  const createCheckout: BookingContextValue['createCheckout'] = ({
+  const createCheckout: BookingContextValue['createCheckout'] = async ({
     venue,
     ticket,
     bookingDate,
     quantity,
   }) => {
+    if (getAuthToken()) {
+      const { data: tx } = await apiPost<Transaction>('/bookings', {
+        venueId: venue.id,
+        bookingDate,
+        items: [{ ticketId: ticket.id, quantity }],
+      });
+      persist({
+        ...state,
+        transactions: [tx, ...state.transactions.filter((t) => t.id !== tx.id)],
+      });
+      return tx;
+    }
+
     const now = new Date();
     const expired = new Date(now.getTime() + 15 * 60 * 1000);
     const invoiceNumber = generateInvoiceNumber(now);
@@ -266,7 +463,58 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return tx;
   };
 
-  const simulateWebhookPaid = (transactionId: string, holderName: string): ETicket[] => {
+  const fetchBooking = useCallback(
+    async (invoiceId: string): Promise<Transaction | undefined> => {
+      if (getAuthToken()) {
+        try {
+          const { data: tx } = await apiGet<Transaction>(
+            `/bookings/${encodeURIComponent(invoiceId)}`,
+          );
+          if (tx) {
+            setState((prev) => {
+              const exists = prev.transactions.some((t) => t.id === tx.id);
+              const nextTransactions = exists
+                ? prev.transactions.map((t) => (t.id === tx.id ? tx : t))
+                : [tx, ...prev.transactions];
+              const next = { ...prev, transactions: nextTransactions };
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+              } catch {
+                // ignore storage errors
+              }
+              return next;
+            });
+            return tx;
+          }
+        } catch {
+          // fallback to local state
+        }
+      }
+      return state.transactions.find((t) => t.id === invoiceId || t.invoiceNumber === invoiceId);
+    },
+    [state.transactions],
+  );
+
+  const simulateWebhookPaid = async (
+    transactionId: string,
+    holderName: string,
+  ): Promise<ETicket[]> => {
+    if (getAuthToken()) {
+      const { data: updatedTx } = await apiPost<Transaction>(
+        `/bookings/${encodeURIComponent(transactionId)}/simulate-pay`,
+      );
+      const { data: latestTickets } = await apiGet<ETicket[]>('/tickets');
+      const nextTransactions = state.transactions.map((t) =>
+        t.id === updatedTx.id ? updatedTx : t,
+      );
+      const nextTickets = Array.isArray(latestTickets) ? latestTickets : state.tickets;
+      persist({
+        transactions: nextTransactions,
+        tickets: nextTickets,
+      });
+      return nextTickets.filter((tk) => tk.invoiceNumber === updatedTx.invoiceNumber);
+    }
+
     const target = state.transactions.find((t) => t.id === transactionId);
     if (!target) return [];
     if (target.paymentStatus === 'PAID') {
@@ -374,10 +622,15 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       value={{
         ...state,
         venues,
+        venuesLoading,
         updateVenues,
+        refreshVenues,
+        fetchVenueDetail,
         getVenueById,
         createCheckout,
+        fetchBooking,
         simulateWebhookPaid,
+        refreshTickets,
         redeemTicket,
         cancelTransaction,
         expireTransaction,

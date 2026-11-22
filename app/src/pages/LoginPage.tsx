@@ -7,7 +7,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const {
     loginWithCredentials,
-    registerCustomer,
+    requestRegistration,
+    verifyRegistrationOtp,
     loginWithGoogle,
     loginAsDemoOwner,
   } = useAuth();
@@ -30,10 +31,12 @@ export default function LoginPage() {
 
   // OTP state
   const [otp, setOtp] = useState('');
+  const [devOtpHint, setDevOtpHint] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showGooglePicker, setShowGooglePicker] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -48,8 +51,9 @@ export default function LoginPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      const loggedIn = loginWithCredentials(emailTrimmed, loginPassword);
+      const loggedIn = await loginWithCredentials(emailTrimmed, loginPassword);
       if (loggedIn.role === 'OWNER') {
         navigate('/mitra', { replace: true });
         return;
@@ -61,10 +65,12 @@ export default function LoginPage() {
       } else {
         setError('Gagal masuk ke akun.');
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -95,33 +101,49 @@ export default function LoginPage() {
       return;
     }
 
-    setOtp('');
-    setStep('otp');
+    setIsSubmitting(true);
+    try {
+      const info = await requestRegistration({
+        fullName: regFullName,
+        phoneNumber: regPhone,
+        email: emailTrimmed,
+        password: regPassword,
+      });
+      setDevOtpHint(info.devOtp ?? '');
+      setOtp('');
+      setStep('otp');
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Gagal mengirim kode OTP pendaftaran.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (otp.trim().length < 4) {
-      setError('Masukkan kode OTP simulasi (gunakan 123456).');
+    if (otp.trim().length < 6) {
+      setError('Masukkan 6 digit kode OTP yang dikirimkan.');
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      registerCustomer({
-        fullName: regFullName,
-        phoneNumber: regPhone,
-        email: regEmail,
-        password: regPassword,
-      });
+      await verifyRegistrationOtp(regEmail, otp);
       navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Gagal mendaftarkan akun.');
+        setError('Gagal memverifikasi OTP.');
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -278,12 +300,13 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow"
+                  disabled={isSubmitting}
+                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow"
                 >
                   <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:translate-x-0.5" aria-hidden="true">
                     login
                   </span>
-                  <span>Masuk ke Akun</span>
+                  <span>{isSubmitting ? 'Memproses...' : 'Masuk ke Akun'}</span>
                 </button>
 
                 <div className="relative py-1 flex items-center">
@@ -449,12 +472,13 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow mt-2"
+                  disabled={isSubmitting}
+                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow mt-2"
                 >
                   <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:translate-x-0.5" aria-hidden="true">
                     arrow_forward
                   </span>
-                  <span>Daftar &amp; Minta OTP</span>
+                  <span>{isSubmitting ? 'Mengirim OTP...' : 'Daftar & Minta OTP'}</span>
                 </button>
 
                 <p className="text-center text-xs text-gray-500 pt-1">
@@ -484,7 +508,7 @@ export default function LoginPage() {
                 <p className="font-semibold text-[#111827]">
                   Gunakan kode simulasi:{' '}
                   <span className="font-mono text-sm px-2 py-0.5 rounded bg-gray-200 text-[#111827]">
-                    123456
+                    {devOtpHint || '123456'}
                   </span>
                 </p>
               </div>
@@ -514,9 +538,10 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold transition-colors"
+                disabled={isSubmitting}
+                className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition-colors"
               >
-                Verifikasi OTP &amp; Selesaikan Pendaftaran
+                {isSubmitting ? 'Memverifikasi...' : 'Verifikasi OTP & Selesaikan Pendaftaran'}
               </button>
 
               <button
