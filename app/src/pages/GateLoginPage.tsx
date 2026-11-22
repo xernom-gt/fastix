@@ -199,12 +199,9 @@ export default function GateLoginPage() {
             </button>
           </form>
 
-          <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+          <div className="pt-2 border-t border-gray-100 flex items-center justify-center text-xs text-gray-500">
             <Link to="/explore" className="hover:text-[#111827] font-semibold">
               Kembali ke Beranda
-            </Link>
-            <Link to="/mitra" className="hover:text-[#111827] font-semibold">
-              Portal Owner
             </Link>
           </div>
         </div>
