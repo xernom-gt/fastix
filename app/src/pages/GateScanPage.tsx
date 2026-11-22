@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { getTodayISO } from '@pariwisloka/shared';
+import { getTodayISO, type ETicket } from '@pariwisloka/shared';
 import { useBookings } from '../store/bookingStore';
 import {
   loadGateSession,
@@ -9,6 +9,36 @@ import {
   saveOfflineQueue,
   type OfflineScanQueueItem,
 } from '../utils/operationsStorage';
+
+const API_BASE_URL =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
+  'http://localhost:8080/api/v1';
+const GATE_TOKEN_STORAGE_KEY = 'fastix_gate_token_v1';
+
+interface ApiErrorBody {
+  error?: { message?: string; code?: string };
+  message?: string;
+}
+
+interface GateTicketsTodayResponse extends ApiErrorBody {
+  data?: ETicket[] | { tickets?: ETicket[] };
+}
+
+interface GateRedeemResponse extends ApiErrorBody {
+  data?: {
+    ticket?: Partial<ETicket>;
+    redeemedAt?: string;
+    holderName?: string;
+    ticketTitle?: string;
+    ticketCode?: string;
+  };
+}
+
+interface GateSyncResponse extends ApiErrorBody {
+  data?: {
+    syncedCount?: number;
+  };
+}
 
 interface ScanOutcome {
   accepted: boolean;
@@ -47,6 +77,13 @@ export default function GateScanPage() {
   const [manualInput, setManualInput] = useState('');
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'REDEEMED'>('ALL');
+  const [apiTickets, setApiTickets] = useState<ETicket[] | null>(null);
+  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
+  const [isRedeeming, setIsRedeeming] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  const gateToken = localStorage.getItem(GATE_TOKEN_STORAGE_KEY);
 
   // Camera preview state
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -128,24 +165,66 @@ export default function GateScanPage() {
     }, 50);
   };
 
+  const handleUnauthorized = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
+    saveGateSession(null);
+    navigate('/gate/login', { replace: true });
+  }, [navigate]);
+
+  const fetchTodayTickets = useCallback(async () => {
+    if (!gateToken || !staff) return;
+    setIsLoadingTickets(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/gate/tickets/today`, {
+        headers: { Authorization: `Bearer ${gateToken}` },
+      });
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      if (!response.ok) return;
+      const payload = (await response.json().catch(() => ({}))) as GateTicketsTodayResponse;
+      const list = Array.isArray(payload.data)
+        ? payload.data
+        : Array.isArray(payload.data?.tickets)
+          ? payload.data.tickets
+          : null;
+      if (list) {
+        setApiTickets(list);
+      }
+    } catch {
+      // Keep local/cached tickets when server is unreachable
+    } finally {
+      setIsLoadingTickets(false);
+    }
+  }, [gateToken, staff, handleUnauthorized]);
+
+  useEffect(() => {
+    if (!isOfflineMode && gateToken) {
+      void fetchTodayTickets();
+    }
+  }, [isOfflineMode, gateToken, fetchTodayTickets]);
+
   const venueTickets = useMemo(() => {
     if (!staff) return [];
+    if (apiTickets) return apiTickets;
     return tickets.filter((t) => t.venueId === staff.venueId);
-  }, [tickets, staff]);
+  }, [apiTickets, tickets, staff]);
 
   const filteredTickets = useMemo(() => {
     if (statusFilter === 'ALL') return venueTickets;
     return venueTickets.filter((t) => t.status === statusFilter);
   }, [venueTickets, statusFilter]);
 
-  if (!staff) {
+  if (!staff || !gateToken) {
     return <Navigate to="/gate/login" replace />;
   }
 
-  const processTicketCode = (raw: string) => {
-    const code = extractTicketCode(raw);
-    if (!code) return;
-
+  const processLocalRedeem = (code: string) => {
     const target = venueTickets.find((t) => t.ticketCode.toUpperCase() === code);
     if (!target) {
       setOutcome({
@@ -192,6 +271,18 @@ export default function GateScanPage() {
     const redeemed = redeemTicket(target.ticketCode);
     const nowIso = redeemed?.redeemedAt ?? new Date().toISOString();
 
+    if (apiTickets) {
+      setApiTickets((prev) =>
+        prev
+          ? prev.map((t) =>
+              t.ticketCode === target.ticketCode
+                ? { ...t, status: 'REDEEMED', redeemedAt: nowIso }
+                : t,
+            )
+          : prev,
+      );
+    }
+
     if (isOfflineMode) {
       const queuedItem: OfflineScanQueueItem = {
         id: `q_${Date.now()}`,
@@ -217,19 +308,150 @@ export default function GateScanPage() {
     setManualInput('');
   };
 
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    processTicketCode(manualInput);
+  const processTicketCode = async (raw: string) => {
+    const trimmed = raw.trim();
+    const code = extractTicketCode(trimmed);
+    if (!code) return;
+
+    if (isOfflineMode || !gateToken) {
+      processLocalRedeem(code);
+      return;
+    }
+
+    setIsRedeeming(true);
+    try {
+      const qrPayload = trimmed.includes('|') ? trimmed : undefined;
+      const response = await fetch(`${API_BASE_URL}/gate/redeem`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${gateToken}`,
+        },
+        body: JSON.stringify({
+          ticketCode: code,
+          ...(qrPayload ? { qrPayload } : {}),
+        }),
+      });
+
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as GateRedeemResponse;
+
+      if (!response.ok) {
+        const message =
+          payload.error?.message || payload.message || 'Tiket tidak dapat divalidasi.';
+        const isDoubleScan =
+          response.status === 409 || /redeem|sudah|double/i.test(message);
+        setOutcome({
+          accepted: false,
+          headline: isDoubleScan
+            ? 'DITOLAK • Sudah Digunakan (Double-Scan)'
+            : 'DITOLAK • Validasi Gagal',
+          detail: message,
+          ticketCode: code,
+        });
+        return;
+      }
+
+      const ticketData = payload.data?.ticket;
+      const redeemedAt =
+        payload.data?.redeemedAt ?? ticketData?.redeemedAt ?? new Date().toISOString();
+      const matched = venueTickets.find((t) => t.ticketCode.toUpperCase() === code);
+      const holderName =
+        payload.data?.holderName ?? ticketData?.holderName ?? matched?.holderName ?? 'Pengunjung';
+      const ticketTitle =
+        payload.data?.ticketTitle ?? ticketData?.ticketTitle ?? matched?.ticketTitle ?? 'E-Ticket';
+
+      redeemTicket(code);
+      if (apiTickets) {
+        setApiTickets((prev) =>
+          prev
+            ? prev.map((t) =>
+                t.ticketCode.toUpperCase() === code
+                  ? { ...t, status: 'REDEEMED', redeemedAt }
+                  : t,
+              )
+            : prev,
+        );
+      }
+
+      setOutcome({
+        accepted: true,
+        headline: 'VALID • Check-in Berhasil',
+        detail: `${holderName} (${ticketTitle})`,
+        ticketCode: code,
+      });
+      setManualInput('');
+    } catch {
+      processLocalRedeem(code);
+    } finally {
+      setIsRedeeming(false);
+    }
   };
 
-  const handleSyncOfflineQueue = () => {
-    const nextQueue = offlineQueue.map((item) => ({ ...item, synced: true }));
-    setOfflineQueue(nextQueue);
-    saveOfflineQueue(nextQueue);
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void processTicketCode(manualInput);
+  };
+
+  const handleSyncOfflineQueue = async () => {
+    const pendingItems = offlineQueue.filter((q) => !q.synced);
+    if (pendingItems.length === 0) return;
+
+    setSyncNotice(null);
+    if (!gateToken) {
+      const nextQueue = offlineQueue.map((item) => ({ ...item, synced: true }));
+      setOfflineQueue(nextQueue);
+      saveOfflineQueue(nextQueue);
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/gate/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${gateToken}`,
+        },
+        body: JSON.stringify({
+          items: pendingItems.map((item) => ({
+            ticketCode: item.ticketCode,
+            scannedAt: item.scannedAt,
+          })),
+        }),
+      });
+
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as GateSyncResponse;
+      if (!response.ok) {
+        setSyncNotice(
+          payload.error?.message || payload.message || 'Gagal menyinkronkan antrean ke server.',
+        );
+        return;
+      }
+
+      const nextQueue = offlineQueue.map((item) => ({ ...item, synced: true }));
+      setOfflineQueue(nextQueue);
+      saveOfflineQueue(nextQueue);
+      void fetchTodayTickets();
+    } catch {
+      setSyncNotice('Server tidak terjangkau. Antrean tetap tersimpan lokal.');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handleLogout = () => {
     stopCamera();
+    localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
     saveGateSession(null);
     navigate('/gate/login', { replace: true });
   };
@@ -543,9 +765,10 @@ export default function GateScanPage() {
                   />
                   <button
                     type="submit"
-                    className="h-12 px-6 rounded-xl bg-[#111827] hover:bg-black text-white text-sm font-extrabold whitespace-nowrap transition-colors cursor-pointer"
+                    disabled={isRedeeming}
+                    className="h-12 px-6 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-sm font-extrabold whitespace-nowrap transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    Validasi Tiket
+                    {isRedeeming ? 'Memvalidasi...' : 'Validasi Tiket'}
                   </button>
                 </div>
               </form>
@@ -582,12 +805,19 @@ export default function GateScanPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={handleSyncOfflineQueue}
-                    className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors cursor-pointer"
+                    disabled={isSyncing}
+                    onClick={() => void handleSyncOfflineQueue()}
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    Sinkronkan
+                    {isSyncing ? 'Menyinkronkan...' : 'Sinkronkan'}
                   </button>
                 </div>
+
+                {syncNotice && (
+                  <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    {syncNotice}
+                  </p>
+                )}
 
                 <div className="divide-y divide-gray-100">
                   {offlineQueue.map((item) => (
@@ -620,7 +850,12 @@ export default function GateScanPage() {
           {/* Kolom Kanan: Daftar Tiket Harian */}
           <section className="lg:col-span-5 rounded-2xl bg-white border border-gray-200 p-5 space-y-4 h-fit">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-extrabold text-[#111827]">Daftar Tiket Hari Ini</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-extrabold text-[#111827]">Daftar Tiket Hari Ini</h2>
+                {isLoadingTickets && (
+                  <span className="text-[11px] font-semibold text-gray-500">Memuat...</span>
+                )}
+              </div>
               <div className="flex items-center gap-1">
                 {(['ALL', 'VALID', 'REDEEMED'] as const).map((tab) => (
                   <button
