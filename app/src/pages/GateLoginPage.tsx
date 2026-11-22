@@ -1,6 +1,32 @@
 import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { loadGateSession, loadStaffAccounts, saveGateSession } from '../utils/operationsStorage';
+import {
+  loadGateSession,
+  loadStaffAccounts,
+  saveGateSession,
+  type StaffGateAccount,
+} from '../utils/operationsStorage';
+
+const API_BASE_URL =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
+  'http://localhost:8080/api/v1';
+const GATE_TOKEN_STORAGE_KEY = 'fastix_gate_token_v1';
+
+interface GateLoginApiResponse {
+  success?: boolean;
+  data?: {
+    accessToken?: string;
+    staff?: {
+      id: string;
+      name: string;
+      venueId: string;
+      venueCode: string;
+      venueName: string;
+    };
+  };
+  error?: { message?: string };
+  message?: string;
+}
 
 export default function GateLoginPage() {
   const navigate = useNavigate();
@@ -9,12 +35,13 @@ export default function GateLoginPage() {
   const [venueCode, setVenueCode] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (existingSession) {
     return <Navigate to="/gate/scan" replace />;
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -25,23 +52,65 @@ export default function GateLoginPage() {
       return;
     }
 
-    const staffs = loadStaffAccounts();
-    const matched = staffs.find(
-      (s) => s.venueCode.toUpperCase() === normalizedCode && s.pin === cleanPin,
-    );
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/gate/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venueCode: normalizedCode, pin: cleanPin }),
+      });
 
-    if (!matched) {
-      setError('Kode destinasi atau PIN 6 digit tidak sesuai.');
-      return;
+      const payload = (await response.json().catch(() => ({}))) as GateLoginApiResponse;
+
+      if (!response.ok) {
+        const message =
+          payload.error?.message || payload.message || 'Kode destinasi atau PIN 6 digit tidak sesuai.';
+        setError(message);
+        return;
+      }
+
+      const accessToken = payload.data?.accessToken;
+      const staff = payload.data?.staff;
+      if (!accessToken || !staff) {
+        setError('Respons server tidak valid. Silakan coba lagi.');
+        return;
+      }
+
+      localStorage.setItem(GATE_TOKEN_STORAGE_KEY, accessToken);
+      const sessionAccount: StaffGateAccount = {
+        id: staff.id,
+        name: staff.name,
+        venueId: staff.venueId,
+        venueCode: staff.venueCode,
+        venueName: staff.venueName,
+        pin: cleanPin,
+        isActive: true,
+      };
+      saveGateSession(sessionAccount);
+      navigate('/gate/scan', { replace: true });
+    } catch {
+      // Fallback to local mock accounts when API server is unreachable in offline/dev mode
+      const staffs = loadStaffAccounts();
+      const matched = staffs.find(
+        (s) => s.venueCode.toUpperCase() === normalizedCode && s.pin === cleanPin,
+      );
+
+      if (!matched) {
+        setError('Tidak dapat terhubung ke server, dan kode/PIN lokal tidak cocok.');
+        return;
+      }
+
+      if (!matched.isActive) {
+        setError('Akun Staff Gate ini sedang dinonaktifkan oleh Owner Wisata.');
+        return;
+      }
+
+      localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
+      saveGateSession(matched);
+      navigate('/gate/scan', { replace: true });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (!matched.isActive) {
-      setError('Akun Staff Gate ini sedang dinonaktifkan oleh Owner Wisata.');
-      return;
-    }
-
-    saveGateSession(matched);
-    navigate('/gate/scan', { replace: true });
   };
 
   return (
@@ -141,9 +210,10 @@ export default function GateLoginPage() {
 
             <button
               type="submit"
-              className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-sm font-bold transition-colors"
+              disabled={isSubmitting}
+              className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
             >
-              Masuk ke Scanner
+              {isSubmitting ? 'Memverifikasi...' : 'Masuk ke Scanner'}
             </button>
           </form>
 
