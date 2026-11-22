@@ -68,11 +68,21 @@ export default function MapPage() {
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const lastBoundsRef = useRef<L.LatLngBounds | null>(null);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const selectedVenue: Destinasi | undefined = useMemo(
     () => publishedVenues.find((v) => v.id === selectedId) ?? publishedVenues[0],
     [publishedVenues, selectedId],
   );
+
+  useEffect(() => {
+    if (!selectedVenue) return;
+    const cardEl = cardRefs.current[selectedVenue.id];
+    if (cardEl && window.innerWidth < 768) {
+      cardEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [selectedVenue?.id]);
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
@@ -82,12 +92,14 @@ export default function MapPage() {
     setGeoStatus('loading');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setOrigin({
+        const nextOrigin = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           label: 'Lokasi Saya',
-        });
+        };
+        setOrigin(nextOrigin);
         setGeoStatus('ok');
+        mapRef.current?.setView([nextOrigin.lat, nextOrigin.lng], 11, { animate: true });
       },
       () => {
         setGeoStatus('error');
@@ -96,18 +108,28 @@ export default function MapPage() {
     );
   };
 
-  // Initialize Leaflet map instance once
-  useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+  const handleFocusRoute = (venueId: string) => {
+    setSelectedId(venueId);
+    const map = mapRef.current;
+    if (map && lastBoundsRef.current && venueId === selectedVenue?.id) {
+      map.fitBounds(lastBoundsRef.current.pad(0.22), { animate: true });
+    }
+  };
 
-    const map = L.map(mapContainerRef.current, {
+  // Initialize Leaflet map instance once and keep size synced on layout/viewport changes
+  useEffect(() => {
+    const container = mapContainerRef.current;
+    if (!container || mapRef.current) return;
+
+    const isDesktop = window.innerWidth >= 768;
+    const map = L.map(container, {
       center: [DEFAULT_ORIGIN.lat, DEFAULT_ORIGIN.lng],
       zoom: 6,
-      zoomControl: true,
+      zoomControl: isDesktop,
     });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+      attribution: '&copy; OpenStreetMap',
       maxZoom: 18,
     }).addTo(map);
 
@@ -115,11 +137,34 @@ export default function MapPage() {
     routeLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
+    const invalidateTimer = window.setTimeout(() => {
+      if (mapRef.current === map) {
+        map.invalidateSize({ animate: false });
+      }
+    }, 100);
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (mapRef.current === map) {
+        map.invalidateSize({ animate: false });
+      }
+    });
+    resizeObserver.observe(container);
+
+    const handleWindowResize = () => {
+      if (mapRef.current === map) {
+        map.invalidateSize({ animate: false });
+      }
+    };
+    window.addEventListener('resize', handleWindowResize);
+
     return () => {
-      map.remove();
+      window.clearTimeout(invalidateTimer);
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
       mapRef.current = null;
       markersLayerRef.current = null;
       routeLayerRef.current = null;
+      map.remove();
     };
   }, []);
 
@@ -153,7 +198,24 @@ export default function MapPage() {
     const timeoutId = window.setTimeout(() => controller.abort(), 5000);
     setRouteLoading(true);
 
+    const applyBounds = (bounds: L.LatLngBounds) => {
+      if (controller.signal.aborted || mapRef.current !== map) return;
+      lastBoundsRef.current = bounds;
+      map.invalidateSize({ animate: false });
+      const isMobile = window.innerWidth < 768;
+      if (isMobile) {
+        map.fitBounds(bounds, {
+          paddingTopLeft: [24, 96],
+          paddingBottomRight: [24, 176],
+          animate: false,
+        });
+      } else {
+        map.fitBounds(bounds.pad(0.2), { animate: false });
+      }
+    };
+
     const drawFallbackRoute = () => {
+      if (controller.signal.aborted || mapRef.current !== map) return;
       routeLayer.clearLayers();
       const straightMeters = hitungJarakHaversine(
         origin.lat,
@@ -168,7 +230,7 @@ export default function MapPage() {
         ],
         { color: '#111827', weight: 3, dashArray: '6 6' },
       ).addTo(routeLayer);
-      map.fitBounds(line.getBounds().pad(0.25));
+      applyBounds(line.getBounds());
       setRouteSummary({
         distanceMeters: straightMeters,
         durationMinutes: Math.max(5, Math.round((straightMeters / 1000 / 45) * 60)),
@@ -180,35 +242,44 @@ export default function MapPage() {
 
     fetch(url, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('OSRM error'))))
-      .then((data: { routes?: Array<{ distance: number; duration: number; geometry: { coordinates: Array<[number, number]> } }> }) => {
-        const route = data.routes?.[0];
-        if (!route?.geometry?.coordinates?.length) {
-          drawFallbackRoute();
-          return;
-        }
-        routeLayer.clearLayers();
-        const latLngs: L.LatLngExpression[] = route.geometry.coordinates.map(([lng, lat]) => [
-          lat,
-          lng,
-        ]);
-        const polyline = L.polyline(latLngs, { color: '#111827', weight: 4 }).addTo(routeLayer);
-        map.fitBounds(polyline.getBounds().pad(0.2));
-        setRouteSummary({
-          distanceMeters: route.distance,
-          durationMinutes: Math.max(1, Math.round(route.duration / 60)),
-          isRoadRoute: true,
-        });
-      })
+      .then(
+        (data: {
+          routes?: Array<{
+            distance: number;
+            duration: number;
+            geometry: { coordinates: Array<[number, number]> };
+          }>;
+        }) => {
+          if (controller.signal.aborted || mapRef.current !== map) return;
+          const route = data.routes?.[0];
+          if (!route?.geometry?.coordinates?.length) {
+            drawFallbackRoute();
+            return;
+          }
+          routeLayer.clearLayers();
+          const latLngs: L.LatLngExpression[] = route.geometry.coordinates.map(([lng, lat]) => [
+            lat,
+            lng,
+          ]);
+          const polyline = L.polyline(latLngs, { color: '#111827', weight: 4 }).addTo(routeLayer);
+          applyBounds(polyline.getBounds());
+          setRouteSummary({
+            distanceMeters: route.distance,
+            durationMinutes: Math.max(1, Math.round(route.duration / 60)),
+            isRoadRoute: true,
+          });
+        },
+      )
       .catch(() => {
-        if (!controller.signal.aborted) {
-          drawFallbackRoute();
-        } else {
+        if (!controller.signal.aborted && mapRef.current === map) {
           drawFallbackRoute();
         }
       })
       .finally(() => {
         window.clearTimeout(timeoutId);
-        setRouteLoading(false);
+        if (!controller.signal.aborted) {
+          setRouteLoading(false);
+        }
       });
 
     return () => {
@@ -218,8 +289,9 @@ export default function MapPage() {
   }, [origin, selectedVenue]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 pb-10 space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+    <div className="md:max-w-7xl md:mx-auto md:px-6 md:pt-6 md:pb-10 md:space-y-5">
+      {/* Desktop Header */}
+      <div className="hidden md:flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#111827]">
             Peta Destinasi &amp; Rute
@@ -263,14 +335,14 @@ export default function MapPage() {
       </div>
 
       {geoStatus === 'error' && (
-        <div className="rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-xs text-gray-700">
+        <div className="hidden md:block rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-xs text-gray-700">
           Izin lokasi tidak tersedia. Menggunakan titik berangkat pilihan Anda ({origin.label}).
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Daftar Destinasi */}
-        <div className="lg:col-span-4 space-y-2.5 max-h-[420px] lg:max-h-[540px] overflow-y-auto pr-1">
+      <div className="md:grid md:grid-cols-12 md:gap-5 md:items-start">
+        {/* Desktop Daftar Destinasi */}
+        <div className="hidden md:block md:col-span-4 space-y-2.5 max-h-[540px] overflow-y-auto pr-1">
           {publishedVenues.map((v) => {
             const active = v.id === selectedVenue?.id;
             const straightDist = hitungJarakHaversine(
@@ -308,14 +380,162 @@ export default function MapPage() {
           })}
         </div>
 
-        {/* Peta OpenStreetMap & Ringkasan Rute */}
-        <div className="lg:col-span-8 space-y-4">
-          <div className="relative rounded-2xl border border-gray-200 overflow-hidden bg-gray-100 h-[360px] sm:h-[440px] z-0">
+        {/* Peta OpenStreetMap (Fullscreen di Mobile < md, Card di Desktop >= md) */}
+        <div className="md:col-span-8 md:space-y-4">
+          <div className="fixed inset-x-0 top-16 bottom-16 z-20 md:static md:inset-auto md:z-0 md:rounded-2xl md:border md:border-gray-200 overflow-hidden bg-gray-100 md:h-[460px]">
             <div ref={mapContainerRef} className="w-full h-full" />
+
+            {/* Mobile Floating Top Bar: Origin Chip + Route Info & Recenter Button */}
+            <div className="md:hidden absolute top-3 inset-x-3 z-[1000] flex items-start justify-between gap-2 pointer-events-none">
+              <div className="pointer-events-auto bg-white/95 backdrop-blur-sm border border-gray-200 shadow-md rounded-2xl px-3 py-2 flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <select
+                    aria-label="Pilih titik berangkat"
+                    value={origin.label}
+                    onChange={(e) => {
+                      const region = WILAYAH_INDONESIA.find((w) => w.nama === e.target.value);
+                      if (region) {
+                        setOrigin({
+                          lat: region.pusat.lat,
+                          lng: region.pusat.lng,
+                          label: region.nama,
+                        });
+                      }
+                    }}
+                    className="w-full bg-transparent text-xs font-extrabold text-[#111827] focus:outline-none truncate"
+                  >
+                    <option value="Pusat Yogyakarta">Dari: Yogyakarta</option>
+                    {WILAYAH_INDONESIA.map((w) => (
+                      <option key={w.kode} value={w.nama}>
+                        Dari: {w.nama}
+                      </option>
+                    ))}
+                    {origin.label === 'Lokasi Saya' && (
+                      <option value="Lokasi Saya">Dari: Lokasi Saya</option>
+                    )}
+                  </select>
+                </div>
+                <p className="text-[11px] text-gray-600 truncate mt-0.5 pl-3.5">
+                  {routeLoading
+                    ? 'Menghitung rute...'
+                    : routeSummary && selectedVenue
+                      ? `${selectedVenue.nama} · ${formatJarak(routeSummary.distanceMeters)} (${routeSummary.durationMinutes} mnt)`
+                      : 'Pilih destinasi pada peta'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleUseMyLocation}
+                aria-label="Lokasi Saya"
+                className="pointer-events-auto w-11 h-11 rounded-2xl bg-white/95 backdrop-blur-sm border border-gray-200 shadow-md flex items-center justify-center text-[#111827] active:scale-95 shrink-0"
+              >
+                <span
+                  className={`material-symbols-outlined text-[20px] ${
+                    geoStatus === 'loading' ? 'animate-pulse text-blue-600' : ''
+                  }`}
+                  aria-hidden="true"
+                >
+                  my_location
+                </span>
+              </button>
+            </div>
+
+            {geoStatus === 'error' && (
+              <div className="md:hidden absolute top-[72px] inset-x-3 z-[1000] rounded-xl border border-gray-300 bg-white/95 backdrop-blur-sm px-3 py-2 text-[11px] font-medium text-gray-700 shadow-sm">
+                Izin lokasi tidak tersedia. Memakai titik berangkat {origin.label}.
+              </div>
+            )}
+
+            {/* Mobile Floating Bottom Swipeable Destination Strip */}
+            <div className="md:hidden absolute bottom-3 inset-x-0 z-[1000] px-3">
+              <div className="flex gap-2.5 overflow-x-auto snap-x snap-mandatory pb-0.5">
+                {publishedVenues.map((v) => {
+                  const active = v.id === selectedVenue?.id;
+                  const straightDist = hitungJarakHaversine(
+                    origin.lat,
+                    origin.lng,
+                    v.koordinat.lat,
+                    v.koordinat.lng,
+                  );
+                  const displayDist =
+                    active && routeSummary ? routeSummary.distanceMeters : straightDist;
+                  const displayDuration =
+                    active && routeSummary
+                      ? routeSummary.durationMinutes
+                      : Math.max(5, Math.round((straightDist / 1000 / 45) * 60));
+
+                  return (
+                    <div
+                      key={v.id}
+                      ref={(el) => {
+                        cardRefs.current[v.id] = el;
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedId(v.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedId(v.id);
+                        }
+                      }}
+                      className={`snap-center shrink-0 w-[82vw] max-w-[310px] rounded-2xl border p-3.5 shadow-lg backdrop-blur-sm transition-colors space-y-2.5 cursor-pointer ${
+                        active
+                          ? 'bg-white border-[#111827] ring-1 ring-[#111827]'
+                          : 'bg-white/95 border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-extrabold text-[#111827] truncate">
+                            {v.nama}
+                          </p>
+                          <p className="text-[11px] text-gray-500 truncate">
+                            {v.lokasi} · {formatRupiah(v.hargaMulai)}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-[#111827] text-[10px] font-bold shrink-0">
+                          {formatJarak(displayDist)} · {displayDuration} mnt
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleFocusRoute(v.id);
+                          }}
+                          className="flex-1 h-9 px-3 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-[#111827] text-xs font-bold inline-flex items-center justify-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                            directions
+                          </span>
+                          <span>Rute</span>
+                        </button>
+                        <Link
+                          to={`/destinasi/${v.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 h-9 px-3 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold inline-flex items-center justify-center gap-1"
+                        >
+                          <span>Pesan Tiket</span>
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
+          {/* Desktop Route Summary Card */}
           {selectedVenue && (
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="hidden md:flex rounded-2xl border border-gray-200 bg-white p-5 items-center justify-between gap-4">
               <div className="space-y-1">
                 <h2 className="text-base font-extrabold text-[#111827]">{selectedVenue.nama}</h2>
                 <p className="text-xs text-gray-600">{selectedVenue.alamat}</p>
