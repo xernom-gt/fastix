@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,6 +52,17 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("database migrations checked", "applied", applied)
+
+	if strings.EqualFold(cfg.AppEnv, "development") {
+		seeded, err := database.SeedDev(rootCtx, pool)
+		if err != nil {
+			logger.Error("failed to run dev seeder", "error", err)
+			os.Exit(1)
+		}
+		if seeded {
+			logger.Info("development seed data applied")
+		}
+	}
 
 	if *migrateOnly {
 		return

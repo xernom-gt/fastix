@@ -191,14 +191,21 @@ func (r *PgxOperationsRepository) ReleaseEscrowHPlusOne(ctx context.Context, tod
 			tr.id::text,
 			v.owner_id::text,
 			ti.unit_price::bigint,
-			COUNT(r.id)::int AS redeemed_count
+			(
+				SELECT COUNT(*)::int
+				FROM redemptions r
+				WHERE r.transaction_item_id = ti.id AND r.status = 'REDEEMED'
+			) AS redeemed_count
 		FROM transaction_items ti
 		JOIN transactions tr ON tr.id = ti.transaction_id
 		JOIN venues v ON v.id = tr.venue_id
-		JOIN redemptions r ON r.transaction_item_id = ti.id AND r.status = 'REDEEMED'
 		WHERE ti.is_released = FALSE
 		  AND ti.booking_date < $1::date
-		GROUP BY ti.id, tr.id, v.owner_id, ti.unit_price
+		  AND EXISTS (
+			SELECT 1
+			FROM redemptions r
+			WHERE r.transaction_item_id = ti.id AND r.status = 'REDEEMED'
+		  )
 		FOR UPDATE OF ti
 	`, todayDate)
 	if err != nil {
