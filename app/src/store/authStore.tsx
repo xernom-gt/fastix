@@ -23,6 +23,7 @@ interface BackendUserProfile {
   phoneNumber: string;
   email: string;
   role: string;
+  ownedVenueIds?: string[];
 }
 
 interface AuthTokenResponse {
@@ -33,13 +34,13 @@ interface AuthTokenResponse {
 export interface RegisterOtpInfo {
   email: string;
   expiresInSeconds: number;
-  devOtp?: string;
 }
 
 interface AuthContextValue {
   user: CustomerUser | null;
   isAuthenticated: boolean;
   loginWithCredentials: (email: string, password: string) => Promise<CustomerUser>;
+  loginWithGoogle: (idToken: string) => Promise<CustomerUser>;
   requestRegistration: (data: {
     fullName: string;
     phoneNumber: string;
@@ -48,26 +49,11 @@ interface AuthContextValue {
   }) => Promise<RegisterOtpInfo>;
   verifyRegistrationOtp: (email: string, otpCode: string) => Promise<CustomerUser>;
   updateProfile: (data: { fullName: string }) => Promise<CustomerUser | undefined>;
-  loginWithGoogle: (email?: string) => CustomerUser;
-  loginAsDemoOwner: () => void;
   upgradeToOwner: (venueIds?: string[]) => void;
   logout: () => void;
 }
 
 const STORAGE_KEY = 'fastix_customer_session_v1';
-
-const REGISTERED_OWNER_GOOGLE_ACCOUNTS: Record<
-  string,
-  { id: string; fullName: string; phoneNumber: string; email: string; ownedVenueIds: string[] }
-> = {
-  'bagus@tirtagangga.id': {
-    id: 'usr_owner_tirta',
-    fullName: 'Anak Agung Bagus',
-    phoneNumber: '081238889900',
-    email: 'bagus@tirtagangga.id',
-    ownedVenueIds: ['tirta-gangga'],
-  },
-};
 
 function mapBackendUser(profile: BackendUserProfile): CustomerUser {
   const isOwner = profile.role === 'MITRA' || profile.role === 'OWNER';
@@ -77,7 +63,7 @@ function mapBackendUser(profile: BackendUserProfile): CustomerUser {
     phoneNumber: profile.phoneNumber,
     email: profile.email,
     role: isOwner ? 'OWNER' : 'CUSTOMER',
-    ownedVenueIds: isOwner ? ['tirta-gangga'] : undefined,
+    ownedVenueIds: isOwner ? profile.ownedVenueIds ?? [] : undefined,
   };
 }
 
@@ -143,6 +129,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return mapped;
   };
 
+  const loginWithGoogle = async (idToken: string): Promise<CustomerUser> => {
+    const { data } = await apiPost<AuthTokenResponse>('/auth/google', { idToken });
+    setAuthToken(data.accessToken);
+    const mapped = mapBackendUser(data.user);
+    saveUser(mapped);
+    return mapped;
+  };
+
   const requestRegistration = async (data: {
     fullName: string;
     phoneNumber: string;
@@ -190,34 +184,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return nextUser;
   };
 
-  const loginWithGoogle = (email?: string): CustomerUser => {
-    const normalizedEmail = email?.trim().toLowerCase() ?? '';
-    const ownerProfile = REGISTERED_OWNER_GOOGLE_ACCOUNTS[normalizedEmail];
-
-    const nextUser: CustomerUser = ownerProfile
-      ? { ...ownerProfile, role: 'OWNER' }
-      : {
-          id: 'usr_google_001',
-          fullName: 'Raka Pratama',
-          phoneNumber: '081234567890',
-          email: normalizedEmail || 'raka.pratama@gmail.com',
-          role: 'CUSTOMER',
-        };
-
-    saveUser(nextUser);
-    return nextUser;
-  };
-
-  const loginAsDemoOwner = () => {
-    saveUser({
-      id: 'usr_owner_tirta',
-      fullName: 'Anak Agung Bagus',
-      phoneNumber: '081238889900',
-      role: 'OWNER',
-      ownedVenueIds: ['tirta-gangga'],
-    });
-  };
-
   const upgradeToOwner = (venueIds: string[] = ['tirta-gangga']) => {
     if (!user) return;
     saveUser({
@@ -238,11 +204,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: Boolean(user),
         loginWithCredentials,
+        loginWithGoogle,
         requestRegistration,
         verifyRegistrationOtp,
         updateProfile,
-        loginWithGoogle,
-        loginAsDemoOwner,
         upgradeToOwner,
         logout,
       }}

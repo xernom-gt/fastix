@@ -216,7 +216,7 @@ export default function CheckoutPage() {
                 onClick={handleSimulatePaid}
                 className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
               >
-                {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang (Demo)'}
+                {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
               </button>
               <button
                 type="button"
