@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -29,10 +31,15 @@ func Load() (Config, error) {
 	// Ignore missing .env so container and CI environments can inject vars directly.
 	_ = godotenv.Load()
 
+	databaseURL, err := resolveDatabaseURL()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		AppEnv:             getEnvOrDefault("APP_ENV", "development"),
 		AppPort:            getEnvOrDefault("APP_PORT", "8080"),
-		DatabaseURL:        strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		DatabaseURL:        databaseURL,
 		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175"),
 		JWTSecret:          strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		QRHMACSecret:       strings.TrimSpace(os.Getenv("QR_HMAC_SECRET")),
@@ -42,9 +49,6 @@ func Load() (Config, error) {
 		MidtransServerKey:  strings.TrimSpace(os.Getenv("MIDTRANS_SERVER_KEY")),
 	}
 
-	if cfg.DatabaseURL == "" {
-		return Config{}, fmt.Errorf("DATABASE_URL is required")
-	}
 	if len(cfg.JWTSecret) < 16 {
 		return Config{}, fmt.Errorf("JWT_SECRET must be at least 16 characters")
 	}
@@ -69,6 +73,35 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func resolveDatabaseURL() (string, error) {
+	if direct := strings.TrimSpace(os.Getenv("DATABASE_URL")); direct != "" {
+		return direct, nil
+	}
+
+	host := strings.TrimSpace(os.Getenv("DB_HOST"))
+	port := getEnvOrDefault("DB_PORT", "5432")
+	user := strings.TrimSpace(os.Getenv("DB_USER"))
+	password := os.Getenv("DB_PASSWORD")
+	name := strings.TrimSpace(os.Getenv("DB_NAME"))
+	sslMode := getEnvOrDefault("DB_SSLMODE", "disable")
+
+	if host == "" || user == "" || name == "" {
+		return "", fmt.Errorf("DATABASE_URL or DB_HOST/DB_USER/DB_NAME is required")
+	}
+
+	query := url.Values{}
+	query.Set("sslmode", sslMode)
+
+	dsn := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     net.JoinHostPort(host, port),
+		Path:     name,
+		RawQuery: query.Encode(),
+	}
+	return dsn.String(), nil
 }
 
 func getEnvOrDefault(key, fallback string) string {
