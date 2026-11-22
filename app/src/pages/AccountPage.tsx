@@ -9,6 +9,7 @@ export default function AccountPage() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState('');
   const [editError, setEditError] = useState('');
+  const [isSavingName, setIsSavingName] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   if (!isAuthenticated || !user) {
@@ -33,7 +34,7 @@ export default function AccountPage() {
     setEditError('');
   };
 
-  const handleSaveName = (e: React.FormEvent) => {
+  const handleSaveName = async (e: React.FormEvent) => {
     e.preventDefault();
     setEditError('');
 
@@ -48,8 +49,9 @@ export default function AccountPage() {
       return;
     }
 
+    setIsSavingName(true);
     try {
-      updateProfile({ fullName: trimmed });
+      await updateProfile({ fullName: trimmed });
       setIsEditingName(false);
       setToastMessage('Nama profil berhasil diperbarui.');
       window.setTimeout(() => setToastMessage(''), 3500);
@@ -59,6 +61,8 @@ export default function AccountPage() {
       } else {
         setEditError('Gagal memperbarui nama profil.');
       }
+    } finally {
+      setIsSavingName(false);
     }
   };
 
@@ -175,9 +179,10 @@ export default function AccountPage() {
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors shadow-sm"
+                disabled={isSavingName}
+                className="px-4 py-2 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors shadow-sm"
               >
-                Simpan Perubahan
+                {isSavingName ? 'Menyimpan...' : 'Simpan Perubahan'}
               </button>
               <button
                 type="button"

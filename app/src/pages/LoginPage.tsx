@@ -1,15 +1,49 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
+
+interface GoogleCredentialResponse {
+  credential?: string;
+}
+
+interface GoogleAccountsIdApi {
+  initialize: (config: {
+    client_id: string;
+    callback: (response: GoogleCredentialResponse) => void;
+  }) => void;
+  renderButton: (
+    parent: HTMLElement,
+    options: {
+      theme?: 'outline' | 'filled_blue' | 'filled_black';
+      size?: 'large' | 'medium' | 'small';
+      text?: 'signin_with' | 'signup_with' | 'continue_with';
+      shape?: 'rectangular' | 'pill';
+      width?: number;
+    },
+  ) => void;
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        id?: GoogleAccountsIdApi;
+      };
+    };
+  }
+}
+
+const GOOGLE_CLIENT_ID =
+  (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim() || '';
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const {
     loginWithCredentials,
-    registerCustomer,
     loginWithGoogle,
-    loginAsDemoOwner,
+    requestRegistration,
+    verifyRegistrationOtp,
   } = useAuth();
 
   const redirectTo = searchParams.get('redirect') || '/explore';
@@ -28,12 +62,86 @@ export default function LoginPage() {
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
 
-  // OTP state
+  // OTP & Google state
   const [otp, setOtp] = useState('');
-  const [showGooglePicker, setShowGooglePicker] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleReady, setGoogleReady] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+
+  const handleGoogleCredential = useCallback(
+    async (response: GoogleCredentialResponse) => {
+      if (!response.credential) {
+        setError('Autentikasi Google tidak mengembalikan token kredensial.');
+        return;
+      }
+
+      setError('');
+      setIsSubmitting(true);
+      try {
+        const loggedIn = await loginWithGoogle(response.credential);
+        if (loggedIn.role === 'OWNER') {
+          navigate('/mitra', { replace: true });
+          return;
+        }
+        navigate(redirectTo, { replace: true });
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error ? err.message : 'Gagal masuk dengan akun Google.',
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [loginWithGoogle, navigate, redirectTo],
+  );
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || step !== 'form' || authMode !== 'login') {
+      setGoogleReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    const initGoogleButton = () => {
+      const gsi = window.google?.accounts?.id;
+      const container = googleButtonRef.current;
+      if (!gsi || !container || cancelled) return false;
+
+      gsi.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (res) => {
+          void handleGoogleCredential(res);
+        },
+      });
+      container.innerHTML = '';
+      gsi.renderButton(container, {
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        width: container.clientWidth || 320,
+      });
+      setGoogleReady(true);
+      return true;
+    };
+
+    if (initGoogleButton()) return;
+
+    const timer = window.setInterval(() => {
+      if (initGoogleButton()) {
+        window.clearInterval(timer);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authMode, step, handleGoogleCredential]);
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -48,23 +156,22 @@ export default function LoginPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      const loggedIn = loginWithCredentials(emailTrimmed, loginPassword);
+      const loggedIn = await loginWithCredentials(emailTrimmed, loginPassword);
       if (loggedIn.role === 'OWNER') {
         navigate('/mitra', { replace: true });
         return;
       }
       navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Gagal masuk ke akun.');
-      }
+      setError(err instanceof Error ? err.message : 'Gagal masuk ke akun.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -95,49 +202,49 @@ export default function LoginPage() {
       return;
     }
 
-    setOtp('');
-    setStep('otp');
+    setIsSubmitting(true);
+    try {
+      await requestRegistration({
+        fullName: regFullName,
+        phoneNumber: regPhone,
+        email: emailTrimmed,
+        password: regPassword,
+      });
+      setOtp('');
+      setStep('otp');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Gagal mengirim kode OTP pendaftaran.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (otp.trim().length < 4) {
-      setError('Masukkan kode OTP simulasi (gunakan 123456).');
+    if (otp.trim().length < 6) {
+      setError('Masukkan 6 digit kode OTP yang dikirimkan.');
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      registerCustomer({
-        fullName: regFullName,
-        phoneNumber: regPhone,
-        email: regEmail,
-        password: regPassword,
-      });
+      await verifyRegistrationOtp(regEmail, otp);
       navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Gagal mendaftarkan akun.');
-      }
+      setError(err instanceof Error ? err.message : 'Gagal memverifikasi OTP.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleGoogleSelect = (email: string) => {
-    const loggedIn = loginWithGoogle(email);
-    if (loggedIn.role === 'OWNER') {
-      navigate('/mitra', { replace: true });
+  const handleGoogleFallbackClick = () => {
+    if (!GOOGLE_CLIENT_ID) {
+      setError('Google Sign-In belum dikonfigurasi pada environment (VITE_GOOGLE_CLIENT_ID).');
       return;
     }
-    navigate(redirectTo, { replace: true });
-  };
-
-  const handleDemoOwner = () => {
-    loginAsDemoOwner();
-    const target = searchParams.get('redirect') || '/mitra';
-    navigate(target, { replace: true });
+    setError('Layanan Google Sign-In sedang dimuat. Silakan coba beberapa saat lagi.');
   };
 
   return (
@@ -166,8 +273,8 @@ export default function LoginPage() {
       {/* Right Form Panel (50% Crisp White) */}
       <div className="flex flex-col justify-center items-center px-6 py-10 sm:px-12">
         <div className="fx-fade-up w-full max-w-sm space-y-6">
-          {/* Top Brand + Back Pill */}
-          <div className="flex items-center justify-between">
+          {/* Top Brand */}
+          <div className="flex items-center">
             <Link to="/explore" className="flex items-center gap-2 text-[#111827]">
               <span className="w-8 h-8 rounded-xl bg-[#111827] text-white flex items-center justify-center">
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
@@ -175,14 +282,6 @@ export default function LoginPage() {
                 </span>
               </span>
               <span className="font-extrabold text-xl tracking-tight">Fastix</span>
-            </Link>
-
-            <Link
-              to="/explore"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 hover:bg-gray-200 text-xs font-semibold text-[#111827] transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-[#111827]" aria-hidden="true" />
-              <span>ID</span>
             </Link>
           </div>
 
@@ -198,7 +297,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* Toggle Masuk vs Daftar (hanya tampil saat tahap form) */}
+          {/* Toggle Masuk vs Daftar */}
           {step === 'form' && (
             <div className="grid grid-cols-2 p-1 bg-gray-100 rounded-xl" role="tablist">
               <button
@@ -238,7 +337,6 @@ export default function LoginPage() {
 
           {step === 'form' ? (
             authMode === 'login' ? (
-              /* Form Masuk (Email & Password) */
               <form key="mode-login" onSubmit={handleLoginSubmit} className="fx-fade-up space-y-4">
                 <div className="space-y-1.5">
                   <label htmlFor="login-email" className="block text-xs font-semibold text-[#111827]">
@@ -278,12 +376,13 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow"
+                  disabled={isSubmitting}
+                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow"
                 >
                   <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:translate-x-0.5" aria-hidden="true">
                     login
                   </span>
-                  <span>Masuk ke Akun</span>
+                  <span>{isSubmitting ? 'Memproses...' : 'Masuk ke Akun'}</span>
                 </button>
 
                 <div className="relative py-1 flex items-center">
@@ -292,61 +391,21 @@ export default function LoginPage() {
                   <div className="flex-1 border-t border-gray-200" />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowGooglePicker((prev) => !prev)}
-                  className="w-full h-11 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 active:scale-[0.98] text-xs sm:text-sm font-semibold text-[#111827] flex items-center justify-center gap-2 transition-all duration-200"
-                >
-                  <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                    account_circle
-                  </span>
-                  <span>Masuk dengan Google</span>
-                </button>
+                <div ref={googleButtonRef} className={googleReady ? 'w-full flex justify-center' : 'hidden'} />
 
-                {showGooglePicker && (
-                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-2.5 space-y-1.5">
-                    <p className="px-1.5 text-[11px] font-semibold text-gray-500">
-                      Pilih akun Google simulasi:
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleSelect('raka.pratama@gmail.com')}
-                      className="w-full text-left px-3 py-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 flex items-center justify-between gap-2 transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-[#111827] truncate">Raka Pratama</p>
-                        <p className="text-[11px] text-gray-500 truncate">raka.pratama@gmail.com</p>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-gray-100 text-[10px] font-bold text-gray-700 shrink-0">
-                        Wisatawan
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleSelect('bagus@tirtagangga.id')}
-                      className="w-full text-left px-3 py-2 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 flex items-center justify-between gap-2 transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-[#111827] truncate">Anak Agung Bagus</p>
-                        <p className="text-[11px] text-gray-500 truncate">bagus@tirtagangga.id</p>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-[#111827] text-[10px] font-bold text-white shrink-0">
-                        Owner
-                      </span>
-                    </button>
-                  </div>
+                {!googleReady && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={handleGoogleFallbackClick}
+                    className="w-full h-11 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 active:scale-[0.98] disabled:opacity-60 text-xs sm:text-sm font-semibold text-[#111827] flex items-center justify-center gap-2 transition-all duration-200"
+                  >
+                    <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                      account_circle
+                    </span>
+                    <span>Masuk dengan Google</span>
+                  </button>
                 )}
-
-                <button
-                  type="button"
-                  onClick={handleDemoOwner}
-                  className="w-full h-11 rounded-xl bg-gray-100 border border-gray-200 hover:bg-gray-200 active:scale-[0.98] text-xs font-bold text-[#111827] flex items-center justify-center gap-2 transition-all duration-200"
-                >
-                  <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                    storefront
-                  </span>
-                  <span>Masuk Demo Owner (Tirta Gangga · LOKA-0142)</span>
-                </button>
 
                 <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
                   <Link to="/explore" className="hover:text-[#111827] font-semibold transition-colors">
@@ -364,7 +423,6 @@ export default function LoginPage() {
                 </div>
               </form>
             ) : (
-              /* Form Daftar (5 Fields) */
               <form key="mode-register" onSubmit={handleRegisterSubmit} className="fx-fade-up space-y-3.5">
                 <div className="space-y-1">
                   <label htmlFor="reg-name" className="block text-xs font-semibold text-[#111827]">
@@ -449,12 +507,13 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow mt-2"
+                  disabled={isSubmitting}
+                  className="group w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow mt-2"
                 >
                   <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:translate-x-0.5" aria-hidden="true">
                     arrow_forward
                   </span>
-                  <span>Daftar &amp; Minta OTP</span>
+                  <span>{isSubmitting ? 'Mengirim OTP...' : 'Daftar & Minta OTP'}</span>
                 </button>
 
                 <p className="text-center text-xs text-gray-500 pt-1">
@@ -473,20 +532,10 @@ export default function LoginPage() {
               </form>
             )
           ) : (
-            /* Tahap OTP 6 Digit setelah Registrasi */
             <form key="step-otp" onSubmit={handleVerifyOtp} className="fx-fade-up space-y-4">
-              <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600 leading-relaxed space-y-1.5">
-                <p>
-                  Kode OTP verifikasi pendaftaran dikirim ke{' '}
-                  <strong className="text-[#111827]">{regPhone}</strong> &amp;{' '}
-                  <strong className="text-[#111827]">{regEmail}</strong>.
-                </p>
-                <p className="font-semibold text-[#111827]">
-                  Gunakan kode simulasi:{' '}
-                  <span className="font-mono text-sm px-2 py-0.5 rounded bg-gray-200 text-[#111827]">
-                    123456
-                  </span>
-                </p>
+              <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600 leading-relaxed">
+                Masukkan 6 digit kode OTP verifikasi pendaftaran yang telah dikirim ke{' '}
+                <strong className="text-[#111827]">{regEmail}</strong>.
               </div>
 
               <div className="space-y-1.5">
@@ -499,7 +548,7 @@ export default function LoginPage() {
                   inputMode="numeric"
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
-                  placeholder="123456"
+                  placeholder="000000"
                   maxLength={6}
                   required
                   className="w-full h-11 px-3.5 rounded-xl bg-white border border-gray-300 focus:border-[#111827] focus:outline-none text-center text-lg tracking-[0.3em] font-extrabold text-[#111827]"
@@ -514,9 +563,10 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs sm:text-sm font-bold transition-colors"
+                disabled={isSubmitting}
+                className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition-colors"
               >
-                Verifikasi OTP &amp; Selesaikan Pendaftaran
+                {isSubmitting ? 'Memverifikasi...' : 'Verifikasi OTP & Selesaikan Pendaftaran'}
               </button>
 
               <button

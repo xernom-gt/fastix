@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { WILAYAH_INDONESIA, type KybStatus } from '@pariwisloka/shared';
+import { apiPost, getAuthToken } from '../services/apiClient';
 import { useAuth } from '../store/authStore';
 
 interface KybApplication {
@@ -41,6 +42,7 @@ function loadKybApplication(): KybApplication {
 export default function MitraApplyPage() {
   const { user, isAuthenticated, upgradeToOwner } = useAuth();
   const [form, setForm] = useState<KybApplication>(loadKybApplication);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   if (!isAuthenticated || !user) {
@@ -52,7 +54,7 @@ export default function MitraApplyPage() {
     localStorage.setItem(KYB_STORAGE_KEY, JSON.stringify(next));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (
@@ -67,11 +69,35 @@ export default function MitraApplyPage() {
       return;
     }
 
-    saveForm({
-      ...form,
-      status: 'PENDING',
-      submittedAt: new Date().toISOString(),
-    });
+    setIsSubmitting(true);
+    try {
+      if (getAuthToken()) {
+        await apiPost('/mitra/kyb', {
+          ktpNumber: form.ktpNumber.trim(),
+          ktpPhotoUrl: 'https://storage.fastix.id/kyb/ktp-placeholder.jpg',
+          npwpNumber: form.npwpNumber.trim(),
+          npwpPhotoUrl: 'https://storage.fastix.id/kyb/npwp-placeholder.jpg',
+          nibNumber: form.nibNumber.trim(),
+          bankCode: form.bankName,
+          bankAccountNumber: form.bankAccountNumber.trim(),
+          bankAccountName: user.fullName,
+        });
+      }
+
+      saveForm({
+        ...form,
+        status: 'PENDING',
+        submittedAt: new Date().toISOString(),
+      });
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Gagal mengirim pengajuan KYB. Silakan periksa kembali data Anda.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSimulateApprove = () => {
@@ -312,9 +338,10 @@ export default function MitraApplyPage() {
 
           <button
             type="submit"
-            className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-sm font-bold transition-colors"
+            disabled={isSubmitting}
+            className="w-full h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
           >
-            Kirim Pengajuan Mitra
+            {isSubmitting ? 'Mengirim Pengajuan...' : 'Kirim Pengajuan Mitra'}
           </button>
         </form>
       )}
