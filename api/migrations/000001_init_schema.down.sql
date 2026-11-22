@@ -1,0 +1,24 @@
+DROP TABLE IF EXISTS partner_leads;
+DROP TABLE IF EXISTS payouts;
+DROP TABLE IF EXISTS balance_mutations;
+DROP TABLE IF EXISTS owner_balances;
+DROP TABLE IF EXISTS redemptions;
+DROP TABLE IF EXISTS transaction_items;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS staffs;
+DROP TABLE IF EXISTS venue_images;
+DROP TABLE IF EXISTS venues;
+DROP TABLE IF EXISTS owner_legalities;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS admins;
+
+DROP TYPE IF EXISTS partner_lead_status;
+DROP TYPE IF EXISTS mutation_reference_type;
+DROP TYPE IF EXISTS mutation_type;
+DROP TYPE IF EXISTS payout_status;
+DROP TYPE IF EXISTS redemption_status;
+DROP TYPE IF EXISTS payment_status;
+DROP TYPE IF EXISTS kyb_status;
+DROP TYPE IF EXISTS kategori_wisata;
+DROP TYPE IF EXISTS user_role;
