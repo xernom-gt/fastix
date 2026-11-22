@@ -165,6 +165,16 @@ export default function GateScanPage() {
     }, 50);
   };
 
+  const handleUnauthorized = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
+    saveGateSession(null);
+    navigate('/gate/login', { replace: true });
+  }, [navigate]);
+
   const fetchTodayTickets = useCallback(async () => {
     if (!gateToken || !staff) return;
     setIsLoadingTickets(true);
@@ -172,6 +182,10 @@ export default function GateScanPage() {
       const response = await fetch(`${API_BASE_URL}/gate/tickets/today`, {
         headers: { Authorization: `Bearer ${gateToken}` },
       });
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!response.ok) return;
       const payload = (await response.json().catch(() => ({}))) as GateTicketsTodayResponse;
       const list = Array.isArray(payload.data)
@@ -187,7 +201,7 @@ export default function GateScanPage() {
     } finally {
       setIsLoadingTickets(false);
     }
-  }, [gateToken, staff]);
+  }, [gateToken, staff, handleUnauthorized]);
 
   useEffect(() => {
     if (!isOfflineMode && gateToken) {
@@ -206,7 +220,7 @@ export default function GateScanPage() {
     return venueTickets.filter((t) => t.status === statusFilter);
   }, [venueTickets, statusFilter]);
 
-  if (!staff) {
+  if (!staff || !gateToken) {
     return <Navigate to="/gate/login" replace />;
   }
 
@@ -319,6 +333,11 @@ export default function GateScanPage() {
         }),
       });
 
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
       const payload = (await response.json().catch(() => ({}))) as GateRedeemResponse;
 
       if (!response.ok) {
@@ -405,6 +424,11 @@ export default function GateScanPage() {
           })),
         }),
       });
+
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
 
       const payload = (await response.json().catch(() => ({}))) as GateSyncResponse;
       if (!response.ok) {

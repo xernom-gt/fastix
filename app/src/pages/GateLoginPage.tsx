@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   loadGateSession,
-  loadStaffAccounts,
   saveGateSession,
   type StaffGateAccount,
 } from '../utils/operationsStorage';
@@ -31,13 +30,14 @@ interface GateLoginApiResponse {
 export default function GateLoginPage() {
   const navigate = useNavigate();
   const existingSession = loadGateSession();
+  const existingToken = localStorage.getItem(GATE_TOKEN_STORAGE_KEY);
 
   const [venueCode, setVenueCode] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (existingSession) {
+  if (existingSession && existingToken) {
     return <Navigate to="/gate/scan" replace />;
   }
 
@@ -89,25 +89,7 @@ export default function GateLoginPage() {
       saveGateSession(sessionAccount);
       navigate('/gate/scan', { replace: true });
     } catch {
-      // Fallback to local mock accounts when API server is unreachable in offline/dev mode
-      const staffs = loadStaffAccounts();
-      const matched = staffs.find(
-        (s) => s.venueCode.toUpperCase() === normalizedCode && s.pin === cleanPin,
-      );
-
-      if (!matched) {
-        setError('Tidak dapat terhubung ke server, dan kode/PIN lokal tidak cocok.');
-        return;
-      }
-
-      if (!matched.isActive) {
-        setError('Akun Staff Gate ini sedang dinonaktifkan oleh Owner Wisata.');
-        return;
-      }
-
-      localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
-      saveGateSession(matched);
-      navigate('/gate/scan', { replace: true });
+      setError('Tidak dapat terhubung ke server Fastix. Pastikan server API aktif lalu coba lagi.');
     } finally {
       setIsSubmitting(false);
     }
