@@ -5,6 +5,14 @@ import { parseOwnerTab, type OwnerTab } from '../components/OwnerLayout';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
 import {
+  apiCreateMitraStaff,
+  apiCreateMitraTicket,
+  apiCreatePayout,
+  apiFetchMitraFinance,
+  apiFetchMitraStaffs,
+  apiFetchMitraVenues,
+  apiUpdateMitraStaff,
+  apiUpdateMitraTicket,
   DISBURSEMENT_BANK_ADMIN_FEE,
   getVerifiedBankAccount,
   loadBalanceMutations,
@@ -16,6 +24,8 @@ import {
   saveStaffAccounts,
   type BalanceMutation,
   type BalanceMutationType,
+  type MitraFinanceSummary,
+  type MitraVenueDTO,
   type PayoutRecord,
   type PayoutStatus,
   type StaffGateAccount,
@@ -43,7 +53,7 @@ function formatShortDateTime(iso: string): string {
   }).format(date);
 }
 
-const MUTATION_META: Record<BalanceMutationType, { label: string; badgeClass: string }> = {
+const MUTATION_META: Record<string, { label: string; badgeClass: string }> = {
   PAYIN_INFLOW: { label: 'Check-in Gate (H+1)', badgeClass: 'bg-amber-50 text-amber-800' },
   HOLDING_RELEASED: { label: 'Rilis Escrow H+1', badgeClass: 'bg-emerald-50 text-emerald-800' },
   PAYOUT_WITHDRAW: { label: 'Penarikan Dana', badgeClass: 'bg-gray-100 text-gray-800' },
@@ -52,8 +62,10 @@ const MUTATION_META: Record<BalanceMutationType, { label: string; badgeClass: st
   REFUND_AUTO: { label: 'Refund Otomatis', badgeClass: 'bg-rose-50 text-rose-800' },
 };
 
-const PAYOUT_STATUS_META: Record<PayoutStatus, { label: string; badgeClass: string }> = {
+const PAYOUT_STATUS_META: Record<string, { label: string; badgeClass: string }> = {
+  PENDING: { label: 'Menunggu', badgeClass: 'bg-amber-50 text-amber-800' },
   PROCESSING: { label: 'Diproses', badgeClass: 'bg-amber-50 text-amber-800' },
+  SUCCESS: { label: 'Selesai', badgeClass: 'bg-emerald-50 text-emerald-800' },
   COMPLETED: { label: 'Selesai', badgeClass: 'bg-emerald-50 text-emerald-800' },
   FAILED: { label: 'Gagal', badgeClass: 'bg-red-50 text-red-700' },
 };
@@ -73,10 +85,21 @@ export default function MitraDashboardPage() {
   const [mutations, setMutations] = useState<BalanceMutation[]>(loadBalanceMutations);
   const [payouts, setPayouts] = useState<PayoutRecord[]>(loadPayoutHistory);
 
-  const ownedVenues = useMemo(
-    () => venues.filter((v) => user?.ownedVenueIds?.includes(v.id)),
-    [venues, user?.ownedVenueIds],
-  );
+  const [apiVenues, setApiVenues] = useState<MitraVenueDTO[]>([]);
+  const [apiFinance, setApiFinance] = useState<MitraFinanceSummary | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const ownedVenues = useMemo(() => {
+    const byUser = venues.filter((v) => user?.ownedVenueIds?.includes(v.id));
+    if (byUser.length > 0) return byUser;
+    if (apiVenues.length > 0) {
+      const fromApi = venues.filter((v) =>
+        apiVenues.some((av) => av.id === v.id || av.venueCode === v.venueCode),
+      );
+      if (fromApi.length > 0) return fromApi;
+    }
+    return venues.slice(0, 1);
+  }, [venues, user?.ownedVenueIds, apiVenues]);
 
   const [searchParams] = useSearchParams();
   const [selectedVenueId, setSelectedVenueId] = useState<string>('');
@@ -123,6 +146,63 @@ export default function MitraDashboardPage() {
   );
 
   useEffect(() => {
+    let isMounted = true;
+
+    const loadBackendData = async () => {
+      try {
+        const [venuesRes, staffsRes, financeRes] = await Promise.allSettled([
+          apiFetchMitraVenues(),
+          apiFetchMitraStaffs(),
+          apiFetchMitraFinance(),
+        ]);
+
+        if (!isMounted) return;
+
+        if (venuesRes.status === 'fulfilled' && venuesRes.value.length > 0) {
+          setApiVenues(venuesRes.value);
+          updateVenues(
+            venues.map((v) => {
+              const matched = venuesRes.value.find(
+                (av) => av.id === v.id || av.venueCode === v.venueCode,
+              );
+              if (matched && matched.tickets) {
+                return { ...v, tickets: matched.tickets };
+              }
+              return v;
+            }),
+          );
+        }
+
+        if (staffsRes.status === 'fulfilled') {
+          const loadedStaffs: StaffGateAccount[] = staffsRes.value.map((s) => ({
+            id: s.id,
+            name: s.name,
+            venueId: s.venueId,
+            venueCode: s.venueCode,
+            venueName: activeVenue?.nama || '',
+            pin: '••••••',
+            isActive: s.isActive,
+          }));
+          setStaffs(loadedStaffs);
+          saveStaffAccounts(loadedStaffs);
+        }
+
+        if (financeRes.status === 'fulfilled') {
+          setApiFinance(financeRes.value);
+        }
+      } catch {
+        // Fallback to offline store gracefully
+      }
+    };
+
+    void loadBackendData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeVenue?.id]);
+
+  useEffect(() => {
     if (!activeVenue) return;
     setProfileName(activeVenue.nama);
     setProfileAddress(activeVenue.alamat);
@@ -142,6 +222,39 @@ export default function MitraDashboardPage() {
   );
 
   const financeSummary = useMemo(() => {
+    if (apiFinance) {
+      const holdingUncheckedBalance = apiFinance.holdingPlatformBalance;
+      const pendingBalance = apiFinance.pendingBalance;
+      const availableBalance = apiFinance.availableBalance;
+
+      const ledgerRows: BalanceMutation[] = (apiFinance.mutations || []).map((m) => ({
+        id: m.id,
+        venueId: activeVenue?.id ?? '',
+        type: (m.type as BalanceMutationType) || 'PAYIN_INFLOW',
+        amount: m.amount,
+        description: m.description,
+        createdAt: m.createdAt,
+      }));
+
+      let grossRevenue = 0;
+      let platformFee = 0;
+      for (const m of ledgerRows) {
+        if (m.amount > 0) {
+          grossRevenue += m.amount;
+        }
+      }
+      grossRevenue += holdingUncheckedBalance;
+
+      return {
+        grossRevenue,
+        platformFee,
+        pendingBalance: Math.max(0, pendingBalance),
+        availableBalance: Math.max(0, availableBalance),
+        holdingUncheckedBalance: Math.max(0, holdingUncheckedBalance),
+        ledgerRows,
+      };
+    }
+
     if (!activeVenue) {
       return {
         grossRevenue: 0,
@@ -205,7 +318,6 @@ export default function MitraDashboardPage() {
       const isValid = tk.status === 'VALID';
 
       if (isRefunded) {
-        // Tiket yang berstatus 'REFUNDED' (tidak dipakai > 7 hari) bernilai Rp 0 bagi Owner
         liveMutations.push({
           id: `live_rf_${tk.id}`,
           venueId: tk.venueId,
@@ -217,8 +329,6 @@ export default function MitraDashboardPage() {
           createdAt: tk.paidAt || new Date().toISOString(),
         });
       } else if (isRedeemed) {
-        // Saldo Owner (pendingBalance & availableBalance) HANYA bersumber dari tiket yang sudah berstatus 'REDEEMED'
-        // Rilis saldo H+1 hanya berlaku untuk tiket yang telah REDEEMED
         const checkInDate = tk.redeemedAt ? tk.redeemedAt.slice(0, 10) : tk.bookingDate;
         const isReleased = checkInDate < today;
 
@@ -248,8 +358,6 @@ export default function MitraDashboardPage() {
           });
         }
       } else if (isValid) {
-        // Tiket yang masih 'VALID' (belum dipindai di loket) TIDAK BOLEH masuk ke pendingBalance/availableBalance Owner
-        // melainkan ditampilkan di ringkasan terpisah: "Dana Tiket Belum Check-in (Holding Platform)"
         holdingUncheckedBalance += ticketNet;
         liveMutations.push({
           id: `live_val_${tk.id}`,
@@ -276,15 +384,27 @@ export default function MitraDashboardPage() {
       holdingUncheckedBalance: Math.max(0, holdingUncheckedBalance),
       ledgerRows,
     };
-  }, [activeVenue, mutations, tickets, transactions, today]);
+  }, [activeVenue, apiFinance, mutations, tickets, transactions, today]);
 
-  const venuePayouts = useMemo(
-    () =>
-      payouts
-        .filter((p) => p.venueId === activeVenue?.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [payouts, activeVenue?.id],
-  );
+  const venuePayouts = useMemo(() => {
+    if (apiFinance?.payouts && apiFinance.payouts.length > 0) {
+      return apiFinance.payouts.map((p) => ({
+        id: p.id,
+        venueId: activeVenue?.id ?? '',
+        amountRequested: p.amount,
+        bankAdminFee: p.adminFee,
+        netReceived: p.netAmount,
+        bankName: p.bankCode,
+        accountNumber: p.bankAccountNumber,
+        accountHolder: p.bankAccountName,
+        status: (p.status as PayoutStatus) || 'PROCESSING',
+        createdAt: p.createdAt,
+      }));
+    }
+    return payouts
+      .filter((p) => p.venueId === activeVenue?.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [apiFinance?.payouts, payouts, activeVenue?.id]);
 
   const updateStaffs = (next: StaffGateAccount[]) => {
     setStaffs(next);
@@ -302,68 +422,104 @@ export default function MitraDashboardPage() {
     setTicketFeedback(null);
   };
 
-  const handleSaveTicketEdit = (ticketId: string) => {
+  const handleSaveTicketEdit = async (ticketId: string) => {
     const parsedPrice = Number(editPrice);
     const parsedQuota = Number(editQuota);
-    if (!Number.isFinite(parsedPrice) || parsedPrice < 0 || !Number.isFinite(parsedQuota) || parsedQuota < 1) {
+    if (
+      !Number.isFinite(parsedPrice) ||
+      parsedPrice < 0 ||
+      !Number.isFinite(parsedQuota) ||
+      parsedQuota < 1
+    ) {
       setTicketFeedback('Harga dan kuota harian harus berupa angka valid (kuota minimal 1).');
       return;
     }
 
-    const next = venues.map((v) => {
-      if (v.id !== activeVenue?.id) return v;
-      const updatedTickets = v.tickets.map((t) =>
-        t.id === ticketId
-          ? { ...t, price: Math.round(parsedPrice), dailyQuota: Math.round(parsedQuota) }
-          : t,
-      );
-      const minPrice = updatedTickets.reduce((min, t) => Math.min(min, t.price), updatedTickets[0]?.price ?? v.hargaMulai);
-      return { ...v, tickets: updatedTickets, hargaMulai: minPrice };
-    });
+    setIsSubmitting(true);
+    try {
+      const updated = await apiUpdateMitraTicket(ticketId, {
+        price: Math.round(parsedPrice),
+        dailyQuota: Math.round(parsedQuota),
+      });
 
-    updateVenues(next);
-    setEditingTicketId(null);
-    setTicketFeedback('Harga dan kuota tiket berhasil diperbarui.');
+      const next = venues.map((v) => {
+        if (v.id !== activeVenue?.id) return v;
+        const updatedTickets = v.tickets.map((t) =>
+          t.id === ticketId
+            ? {
+                ...t,
+                price: updated.price ?? Math.round(parsedPrice),
+                dailyQuota: updated.dailyQuota ?? Math.round(parsedQuota),
+              }
+            : t,
+        );
+        const minPrice = updatedTickets.reduce(
+          (min, t) => Math.min(min, t.price),
+          updatedTickets[0]?.price ?? v.hargaMulai,
+        );
+        return { ...v, tickets: updatedTickets, hargaMulai: minPrice };
+      });
+
+      updateVenues(next);
+      setEditingTicketId(null);
+      setTicketFeedback('Harga dan kuota tiket berhasil diperbarui.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal memperbarui tiket.';
+      setTicketFeedback(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAddTicket = (e: React.FormEvent) => {
+  const handleAddTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeVenue) return;
 
     const parsedPrice = Number(newPrice);
     const parsedQuota = Number(newQuota);
-    if (!newTitle.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0 || !Number.isFinite(parsedQuota) || parsedQuota < 1) {
+    if (
+      !newTitle.trim() ||
+      !Number.isFinite(parsedPrice) ||
+      parsedPrice < 0 ||
+      !Number.isFinite(parsedQuota) ||
+      parsedQuota < 1
+    ) {
       setTicketFeedback('Lengkapi nama tiket, harga, dan kuota harian minimal 1.');
       return;
     }
 
-    const created: TicketProduct = {
-      id: `tix_${Date.now()}`,
-      venueId: activeVenue.id,
-      title: newTitle.trim(),
-      description: newDesc.trim() || 'Akses kunjungan harian destinasi wisata.',
-      price: Math.round(parsedPrice),
-      dailyQuota: Math.round(parsedQuota),
-      usedQuotaPaid: 0,
-      usedQuotaPending: 0,
-    };
+    setIsSubmitting(true);
+    try {
+      const created = await apiCreateMitraTicket({
+        venueId: activeVenue.id,
+        title: newTitle.trim(),
+        description: newDesc.trim() || 'Akses kunjungan harian destinasi wisata.',
+        price: Math.round(parsedPrice),
+        dailyQuota: Math.round(parsedQuota),
+      });
 
-    const next = venues.map((v) => {
-      if (v.id !== activeVenue.id) return v;
-      const updatedTickets = [...v.tickets, created];
-      const minPrice = Math.min(v.hargaMulai, created.price);
-      return { ...v, tickets: updatedTickets, hargaMulai: minPrice };
-    });
+      const next = venues.map((v) => {
+        if (v.id !== activeVenue.id) return v;
+        const updatedTickets = [...v.tickets, created];
+        const minPrice = Math.min(v.hargaMulai, created.price);
+        return { ...v, tickets: updatedTickets, hargaMulai: minPrice };
+      });
 
-    updateVenues(next);
-    setNewTitle('');
-    setNewDesc('');
-    setNewPrice('');
-    setNewQuota('');
-    setTicketFeedback(`Tiket "${created.title}" berhasil ditambahkan.`);
+      updateVenues(next);
+      setNewTitle('');
+      setNewDesc('');
+      setNewPrice('');
+      setNewQuota('');
+      setTicketFeedback(`Tiket "${created.title}" berhasil ditambahkan.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal menambahkan tiket.';
+      setTicketFeedback(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAddStaff = (e: React.FormEvent) => {
+  const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeVenue) return;
 
@@ -373,31 +529,69 @@ export default function MitraDashboardPage() {
       return;
     }
 
-    const created: StaffGateAccount = {
-      id: `stf_${Date.now()}`,
-      name: staffName.trim(),
-      venueId: activeVenue.id,
-      venueCode: activeVenue.venueCode,
-      venueName: activeVenue.nama,
-      pin: cleanPin,
-      isActive: true,
-    };
+    setIsSubmitting(true);
+    try {
+      const createdDto = await apiCreateMitraStaff({
+        venueId: activeVenue.id,
+        name: staffName.trim(),
+        pin: cleanPin,
+      });
 
-    updateStaffs([...staffs, created]);
-    setStaffName('');
-    setStaffPin('');
-    setStaffFeedback(`Akun Staff Gate untuk ${created.name} berhasil dibuat.`);
+      const created: StaffGateAccount = {
+        id: createdDto.id,
+        name: createdDto.name,
+        venueId: createdDto.venueId,
+        venueCode: createdDto.venueCode || activeVenue.venueCode,
+        venueName: activeVenue.nama,
+        pin: cleanPin,
+        isActive: createdDto.isActive,
+      };
+
+      updateStaffs([...staffs, created]);
+      setStaffName('');
+      setStaffPin('');
+      setRevealedPins((prev) => ({ ...prev, [created.id]: true }));
+      setStaffFeedback(`Akun Staff Gate untuk ${created.name} berhasil dibuat (PIN: ${cleanPin}).`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal membuat akun staff gate.';
+      setStaffFeedback(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleResetPin = (staffId: string) => {
+  const handleResetPin = async (staffId: string) => {
     const freshPin = generateSixDigitPin();
-    updateStaffs(staffs.map((s) => (s.id === staffId ? { ...s, pin: freshPin } : s)));
-    setRevealedPins((prev) => ({ ...prev, [staffId]: true }));
-    setStaffFeedback(`PIN baru (${freshPin}) telah dibuat. Bagikan ke petugas gate.`);
+    setIsSubmitting(true);
+    try {
+      await apiUpdateMitraStaff(staffId, { pin: freshPin });
+      updateStaffs(staffs.map((s) => (s.id === staffId ? { ...s, pin: freshPin } : s)));
+      setRevealedPins((prev) => ({ ...prev, [staffId]: true }));
+      setStaffFeedback(`PIN baru (${freshPin}) berhasil disimpan. Bagikan ke petugas gate.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal memperbarui PIN staff.';
+      setStaffFeedback(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleToggleStaffActive = (staffId: string) => {
-    updateStaffs(staffs.map((s) => (s.id === staffId ? { ...s, isActive: !s.isActive } : s)));
+  const handleToggleStaffActive = async (staffId: string) => {
+    const target = staffs.find((s) => s.id === staffId);
+    if (!target) return;
+    const nextActive = !target.isActive;
+
+    setIsSubmitting(true);
+    try {
+      await apiUpdateMitraStaff(staffId, { isActive: nextActive });
+      updateStaffs(staffs.map((s) => (s.id === staffId ? { ...s, isActive: nextActive } : s)));
+      setStaffFeedback(`Status akun ${target.name} berhasil diperbarui.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal memperbarui status staff.';
+      setStaffFeedback(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!activeVenue) {
@@ -414,7 +608,7 @@ export default function MitraDashboardPage() {
     ? Math.max(0, Math.round(parsedPayoutAmount) - DISBURSEMENT_BANK_ADMIN_FEE)
     : 0;
 
-  const handleRequestPayout = (e: React.FormEvent) => {
+  const handleRequestPayout = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = Math.round(Number(payoutAmountInput));
     if (!Number.isFinite(amount) || amount < MIN_PAYOUT_AMOUNT) {
@@ -432,39 +626,58 @@ export default function MitraDashboardPage() {
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    const newMutation: BalanceMutation = {
-      id: `mut_${Date.now()}`,
-      venueId: activeVenue.id,
-      type: 'PAYOUT_WITHDRAW',
-      amount: -amount,
-      description: `Penarikan dana ke ${kybBank.bankName} ****${kybBank.accountNumber.slice(-4)}`,
-      createdAt: nowIso,
-    };
-    const newPayout: PayoutRecord = {
-      id: `pay_${Date.now()}`,
-      venueId: activeVenue.id,
-      amountRequested: amount,
-      bankAdminFee: DISBURSEMENT_BANK_ADMIN_FEE,
-      netReceived: amount - DISBURSEMENT_BANK_ADMIN_FEE,
-      bankName: kybBank.bankName,
-      accountNumber: kybBank.accountNumber,
-      accountHolder: kybBank.accountHolder,
-      status: 'PROCESSING',
-      createdAt: nowIso,
-    };
+    setIsSubmitting(true);
+    try {
+      const payoutDto = await apiCreatePayout(amount);
 
-    const nextMutations = [newMutation, ...mutations];
-    const nextPayouts = [newPayout, ...payouts];
-    setMutations(nextMutations);
-    setPayouts(nextPayouts);
-    saveBalanceMutations(nextMutations);
-    savePayoutHistory(nextPayouts);
-    setPayoutAmountInput('');
-    setPayoutFeedback({
-      type: 'success',
-      message: `Pengajuan tarik dana ${formatRupiah(amount)} diproses. Dana bersih ${formatRupiah(newPayout.netReceived)} dikirim ke rekening KYB.`,
-    });
+      try {
+        const refreshedFinance = await apiFetchMitraFinance();
+        setApiFinance(refreshedFinance);
+      } catch {
+        const nowIso = new Date().toISOString();
+        const newMutation: BalanceMutation = {
+          id: `mut_${Date.now()}`,
+          venueId: activeVenue.id,
+          type: 'PAYOUT_WITHDRAW',
+          amount: -amount,
+          description: `Penarikan dana ke ${kybBank.bankName} ****${kybBank.accountNumber.slice(-4)}`,
+          createdAt: nowIso,
+        };
+        const newPayout: PayoutRecord = {
+          id: payoutDto.id || `pay_${Date.now()}`,
+          venueId: activeVenue.id,
+          amountRequested: amount,
+          bankAdminFee: DISBURSEMENT_BANK_ADMIN_FEE,
+          netReceived: payoutDto.netAmount || amount - DISBURSEMENT_BANK_ADMIN_FEE,
+          bankName: payoutDto.bankCode || kybBank.bankName,
+          accountNumber: payoutDto.bankAccountNumber || kybBank.accountNumber,
+          accountHolder: payoutDto.bankAccountName || kybBank.accountHolder,
+          status: 'PROCESSING',
+          createdAt: nowIso,
+        };
+
+        const nextMutations = [newMutation, ...mutations];
+        const nextPayouts = [newPayout, ...payouts];
+        setMutations(nextMutations);
+        setPayouts(nextPayouts);
+        saveBalanceMutations(nextMutations);
+        savePayoutHistory(nextPayouts);
+      }
+
+      setPayoutAmountInput('');
+      setPayoutFeedback({
+        type: 'success',
+        message: `Pengajuan tarik dana ${formatRupiah(amount)} berhasil diproses. Dana bersih ${formatRupiah(payoutDto.netAmount)} dikirim ke rekening KYB.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal memproses penarikan dana.';
+      setPayoutFeedback({
+        type: 'error',
+        message: msg,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleAddFacility = () => {
@@ -484,7 +697,12 @@ export default function MitraDashboardPage() {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profileName.trim() || !profileAddress.trim() || !profileHours.trim() || !profileDesc.trim()) {
+    if (
+      !profileName.trim() ||
+      !profileAddress.trim() ||
+      !profileHours.trim() ||
+      !profileDesc.trim()
+    ) {
       setProfileFeedback({
         type: 'error',
         message: 'Nama destinasi, alamat, jam operasional, dan deskripsi wajib diisi.',
@@ -518,34 +736,39 @@ export default function MitraDashboardPage() {
     <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-12 space-y-6">
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold text-gray-500">Workspace Pengelola Destinasi</p>
-          <h1 className="text-2xl font-extrabold tracking-tight text-[#111827]">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-[#111827]">
             {TAB_HEADINGS[activeTab]}
           </h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+            Kelola operasional, kuota, staf, dan finansial destinasi wisata Anda.
+          </p>
         </div>
 
-        <select
-          aria-label="Pilih destinasi milik mitra"
-          value={activeVenue.id}
-          onChange={(e) => {
-            setSelectedVenueId(e.target.value);
-            setEditingTicketId(null);
-            setTicketFeedback(null);
-            setStaffFeedback(null);
-          }}
-          className="h-10 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-[#111827] focus:border-[#111827] focus:outline-none"
-        >
-          {ownedVenues.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.venueCode} • {v.nama}
-            </option>
-          ))}
-        </select>
+        {/* Venue Selector */}
+        {ownedVenues.length > 1 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="mitra-venue-select" className="text-xs font-semibold text-gray-500">
+              Destinasi:
+            </label>
+            <select
+              id="mitra-venue-select"
+              value={activeVenue.id}
+              onChange={(e) => setSelectedVenueId(e.target.value)}
+              className="text-xs font-bold text-[#111827] bg-white border border-gray-300 rounded-xl px-3 py-2 focus:border-[#111827] focus:outline-none"
+            >
+              {ownedVenues.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.nama} ({v.venueCode})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* Ringkasan Destinasi Aktif */}
-      <div className="rounded-2xl bg-[#111827] text-white p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      {/* Active Venue Banner */}
+      <div className="rounded-2xl bg-[#111827] text-white p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="space-y-1">
           <span className="inline-block px-2.5 py-0.5 rounded-full bg-white/15 text-[11px] font-bold tracking-wide">
             {activeVenue.venueCode}
@@ -614,11 +837,18 @@ export default function MitraDashboardPage() {
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-3.5 flex items-start gap-2.5 text-xs text-gray-600">
-            <span className="material-symbols-outlined text-[18px] text-gray-700 shrink-0 mt-0.5" aria-hidden="true">
+            <span
+              className="material-symbols-outlined text-[18px] text-gray-700 shrink-0 mt-0.5"
+              aria-hidden="true"
+            >
               verified_user
             </span>
             <p className="leading-relaxed">
-              <strong className="text-[#111827]">Aturan Escrow Fastix:</strong> Saldo Owner (Saldo Tertahan &amp; Siap Tarik) hanya bersumber dari tiket yang telah dipindai di loket gate (<strong>REDEEMED</strong>). Tiket yang masih <strong>VALID</strong> berada di holding platform, sedangkan tiket yang tidak dipakai melewati 7 hari di-refund otomatis (Rp 0 bagi Owner).
+              <strong className="text-[#111827]">Aturan Escrow Fastix:</strong> Saldo Owner (Saldo
+              Tertahan &amp; Siap Tarik) hanya bersumber dari tiket yang telah dipindai di loket gate
+              (<strong>REDEEMED</strong>). Tiket yang masih <strong>VALID</strong> berada di holding
+              platform, sedangkan tiket yang tidak dipakai melewati 7 hari di-refund otomatis (Rp 0
+              bagi Owner).
             </p>
           </div>
 
@@ -640,7 +870,10 @@ export default function MitraDashboardPage() {
                 ) : (
                   <div className="divide-y divide-gray-100">
                     {financeSummary.ledgerRows.map((row) => {
-                      const meta = MUTATION_META[row.type];
+                      const meta = MUTATION_META[row.type] ?? {
+                        label: row.type,
+                        badgeClass: 'bg-gray-100 text-gray-800',
+                      };
                       const isPositive = row.amount > 0;
                       const isZero = row.amount === 0;
                       return (
@@ -701,7 +934,10 @@ export default function MitraDashboardPage() {
                 ) : (
                   <div className="space-y-3">
                     {venuePayouts.map((item) => {
-                      const statusMeta = PAYOUT_STATUS_META[item.status];
+                      const statusMeta = PAYOUT_STATUS_META[item.status] ?? {
+                        label: item.status,
+                        badgeClass: 'bg-gray-100 text-gray-800',
+                      };
                       return (
                         <div
                           key={item.id}
@@ -773,20 +1009,26 @@ export default function MitraDashboardPage() {
                   </span>
                 </div>
                 <p className="text-xs font-extrabold text-[#111827]">{kybBank.bankName}</p>
-                <p className="font-mono text-xs font-bold text-[#111827]">{kybBank.accountNumber}</p>
+                <p className="font-mono text-xs font-bold text-[#111827]">
+                  {kybBank.accountNumber}
+                </p>
                 <p className="text-[11px] text-gray-600">a.n. {kybBank.accountHolder}</p>
               </div>
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="mitra-payout-amount" className="block text-xs font-semibold text-gray-700">
+                  <label
+                    htmlFor="mitra-payout-amount"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
                     Nominal Penarikan (Rp)
                   </label>
                   {financeSummary.availableBalance >= MIN_PAYOUT_AMOUNT && (
                     <button
                       type="button"
+                      disabled={isSubmitting}
                       onClick={() => setPayoutAmountInput(String(financeSummary.availableBalance))}
-                      className="text-[11px] font-bold text-[#111827] underline hover:no-underline"
+                      className="text-[11px] font-bold text-[#111827] underline hover:no-underline disabled:opacity-50"
                     >
                       Tarik Semua
                     </button>
@@ -833,10 +1075,10 @@ export default function MitraDashboardPage() {
 
               <button
                 type="submit"
-                disabled={financeSummary.availableBalance < MIN_PAYOUT_AMOUNT}
+                disabled={isSubmitting || financeSummary.availableBalance < MIN_PAYOUT_AMOUNT}
                 className="w-full min-h-[44px] h-11 rounded-xl bg-[#111827] hover:bg-black disabled:bg-gray-300 disabled:text-gray-500 text-white text-xs font-bold transition-colors"
               >
-                Ajukan Penarikan Dana
+                {isSubmitting ? 'Memproses Penarikan...' : 'Ajukan Penarikan Dana'}
               </button>
             </form>
           </div>
@@ -872,7 +1114,10 @@ export default function MitraDashboardPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label htmlFor="mitra-profile-name" className="block text-xs font-semibold text-gray-700">
+              <label
+                htmlFor="mitra-profile-name"
+                className="block text-xs font-semibold text-gray-700"
+              >
                 Nama Destinasi
               </label>
               <input
@@ -886,7 +1131,10 @@ export default function MitraDashboardPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="mitra-profile-hours" className="block text-xs font-semibold text-gray-700">
+              <label
+                htmlFor="mitra-profile-hours"
+                className="block text-xs font-semibold text-gray-700"
+              >
                 Jam Operasional
               </label>
               <input
@@ -902,7 +1150,10 @@ export default function MitraDashboardPage() {
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="mitra-profile-address" className="block text-xs font-semibold text-gray-700">
+            <label
+              htmlFor="mitra-profile-address"
+              className="block text-xs font-semibold text-gray-700"
+            >
               Alamat Lengkap
             </label>
             <input
@@ -930,7 +1181,10 @@ export default function MitraDashboardPage() {
           </div>
 
           <div className="space-y-2.5">
-            <label htmlFor="mitra-profile-facility" className="block text-xs font-semibold text-gray-700">
+            <label
+              htmlFor="mitra-profile-facility"
+              className="block text-xs font-semibold text-gray-700"
+            >
               Fasilitas Tersedia
             </label>
 
@@ -998,7 +1252,10 @@ export default function MitraDashboardPage() {
                 ticket.usedQuotaPending +
                 getExtraUsedQuota(ticket.id, today);
               const remaining = Math.max(0, ticket.dailyQuota - usedTotal);
-              const ratio = Math.min(100, Math.round((usedTotal / Math.max(1, ticket.dailyQuota)) * 100));
+              const ratio = Math.min(
+                100,
+                Math.round((usedTotal / Math.max(1, ticket.dailyQuota)) * 100),
+              );
 
               return (
                 <div
@@ -1072,11 +1329,11 @@ export default function MitraDashboardPage() {
                     <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                       <div className="flex flex-wrap items-center gap-3 text-gray-600">
                         <span>
-                          Kuota Harian: <strong className="text-[#111827]">{ticket.dailyQuota}</strong>
+                          Kuota Harian:{' '}
+                          <strong className="text-[#111827]">{ticket.dailyQuota}</strong>
                         </span>
                         <span>
-                          Terpakai:{' '}
-                          <strong className="text-[#111827]">{usedTotal}</strong>
+                          Terpakai: <strong className="text-[#111827]">{usedTotal}</strong>
                         </span>
                         <span>
                           Sisa: <strong className="text-[#111827]">{remaining}</strong>
@@ -1089,7 +1346,10 @@ export default function MitraDashboardPage() {
                           onClick={() => startEditTicket(ticket)}
                           className="inline-flex items-center gap-1.5 min-h-[44px] sm:min-h-[36px] px-3.5 py-1.5 rounded-lg bg-gray-100 hover:bg-[#111827] text-[#111827] hover:text-white border border-gray-300 hover:border-[#111827] text-xs font-bold transition-colors"
                         >
-                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                          <span
+                            className="material-symbols-outlined text-[16px]"
+                            aria-hidden="true"
+                          >
                             edit
                           </span>
                           <span>Ubah Harga / Kuota</span>
@@ -1114,7 +1374,8 @@ export default function MitraDashboardPage() {
                         />
                       </div>
                       <p className="text-[11px] font-medium text-gray-500">
-                        Okupansi hari ini: {occupancyPercent}% ({usedTotal}/{ticket.dailyQuota} tiket)
+                        Okupansi hari ini: {occupancyPercent}% ({usedTotal}/{ticket.dailyQuota}{' '}
+                        tiket)
                       </p>
                     </div>
                   </div>
@@ -1158,13 +1419,15 @@ export default function MitraDashboardPage() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
+                          disabled={isSubmitting}
                           onClick={() => handleSaveTicketEdit(ticket.id)}
-                          className="px-4 py-2 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+                          className="px-4 py-2 rounded-xl bg-[#111827] hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold transition-colors"
                         >
-                          Simpan Perubahan
+                          {isSubmitting ? 'Menyimpan...' : 'Simpan Perubahan'}
                         </button>
                         <button
                           type="button"
+                          disabled={isSubmitting}
                           onClick={() => setEditingTicketId(null)}
                           className="px-4 py-2 rounded-xl bg-white border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-100 transition-colors"
                         >
@@ -1186,7 +1449,10 @@ export default function MitraDashboardPage() {
             <h3 className="text-sm font-extrabold text-[#111827]">Tambah Jenis Tiket</h3>
             <div className="space-y-3">
               <div className="space-y-1">
-                <label htmlFor="mitra-tix-title" className="block text-xs font-semibold text-gray-700">
+                <label
+                  htmlFor="mitra-tix-title"
+                  className="block text-xs font-semibold text-gray-700"
+                >
                   Nama Tiket
                 </label>
                 <input
@@ -1200,7 +1466,10 @@ export default function MitraDashboardPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="mitra-tix-desc" className="block text-xs font-semibold text-gray-700">
+                <label
+                  htmlFor="mitra-tix-desc"
+                  className="block text-xs font-semibold text-gray-700"
+                >
                   Deskripsi Singkat
                 </label>
                 <input
@@ -1214,7 +1483,10 @@ export default function MitraDashboardPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label htmlFor="mitra-tix-price" className="block text-xs font-semibold text-gray-700">
+                  <label
+                    htmlFor="mitra-tix-price"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
                     Harga (Rp)
                   </label>
                   <input
@@ -1229,7 +1501,10 @@ export default function MitraDashboardPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label htmlFor="mitra-tix-quota" className="block text-xs font-semibold text-gray-700">
+                  <label
+                    htmlFor="mitra-tix-quota"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
                     Kuota Harian
                   </label>
                   <input
@@ -1247,9 +1522,10 @@ export default function MitraDashboardPage() {
             </div>
             <button
               type="submit"
-              className="w-full h-10 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+              disabled={isSubmitting}
+              className="w-full h-10 rounded-xl bg-[#111827] hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold transition-colors"
             >
-              Simpan Tiket Baru
+              {isSubmitting ? 'Menyimpan Tiket...' : 'Simpan Tiket Baru'}
             </button>
           </form>
         </div>
@@ -1309,15 +1585,17 @@ export default function MitraDashboardPage() {
                       </button>
                       <button
                         type="button"
+                        disabled={isSubmitting}
                         onClick={() => handleResetPin(staff.id)}
-                        className="px-3 py-1.5 rounded-lg border border-gray-300 hover:border-[#111827] text-xs font-bold text-[#111827] transition-colors"
+                        className="px-3 py-1.5 rounded-lg border border-gray-300 hover:border-[#111827] text-xs font-bold text-[#111827] transition-colors disabled:opacity-50"
                       >
                         Reset PIN
                       </button>
                       <button
                         type="button"
+                        disabled={isSubmitting}
                         onClick={() => handleToggleStaffActive(staff.id)}
-                        className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold text-[#111827] transition-colors"
+                        className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold text-[#111827] transition-colors disabled:opacity-50"
                       >
                         {staff.isActive ? 'Nonaktifkan' : 'Aktifkan'}
                       </button>
@@ -1336,7 +1614,10 @@ export default function MitraDashboardPage() {
             <h3 className="text-sm font-extrabold text-[#111827]">Tambah Akun Staff Gate</h3>
             <div className="space-y-3">
               <div className="space-y-1">
-                <label htmlFor="mitra-staff-name" className="block text-xs font-semibold text-gray-700">
+                <label
+                  htmlFor="mitra-staff-name"
+                  className="block text-xs font-semibold text-gray-700"
+                >
                   Nama Petugas
                 </label>
                 <input
@@ -1350,7 +1631,10 @@ export default function MitraDashboardPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="mitra-staff-pin" className="block text-xs font-semibold text-gray-700">
+                <label
+                  htmlFor="mitra-staff-pin"
+                  className="block text-xs font-semibold text-gray-700"
+                >
                   PIN 6 Digit
                 </label>
                 <div className="flex gap-2">
@@ -1377,9 +1661,10 @@ export default function MitraDashboardPage() {
             </div>
             <button
               type="submit"
-              className="w-full h-10 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+              disabled={isSubmitting}
+              className="w-full h-10 rounded-xl bg-[#111827] hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold transition-colors"
             >
-              Buat Akun Staff
+              {isSubmitting ? 'Membuat Akun...' : 'Buat Akun Staff'}
             </button>
           </form>
         </div>
