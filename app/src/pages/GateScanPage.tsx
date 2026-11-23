@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import jsQR from 'jsqr';
 import { getTodayISO, type ETicket } from '@pariwisloka/shared';
 import { useBookings } from '../store/bookingStore';
 import {
@@ -87,8 +88,10 @@ export default function GateScanPage() {
 
   // Camera preview state
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const manualInputRef = useRef<HTMLInputElement | null>(null);
+  const lastScanAtRef = useRef<number>(0);
   const [cameraActive, setCameraActive] = useState(false);
   const [isFullscreenCamera, setIsFullscreenCamera] = useState(false);
   const [cameraNotice, setCameraNotice] = useState<string | null>(null);
@@ -397,6 +400,40 @@ export default function GateScanPage() {
     void processTicketCode(manualInput);
   };
 
+  const processTicketCodeRef = useRef(processTicketCode);
+  processTicketCodeRef.current = processTicketCode;
+
+  useEffect(() => {
+    if (!cameraActive) return;
+
+    const intervalId = window.setInterval(() => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      });
+
+      if (decoded?.data) {
+        const now = Date.now();
+        if (now - lastScanAtRef.current < 2000) return;
+        lastScanAtRef.current = now;
+        void processTicketCodeRef.current(decoded.data);
+      }
+    }, 250);
+
+    return () => window.clearInterval(intervalId);
+  }, [cameraActive]);
+
   const handleSyncOfflineQueue = async () => {
     const pendingItems = offlineQueue.filter((q) => !q.synced);
     if (pendingItems.length === 0) return;
@@ -461,7 +498,8 @@ export default function GateScanPage() {
   const redeemedCount = venueTickets.filter((t) => t.status === 'REDEEMED').length;
 
   return (
-    <div className="min-h-screen bg-gray-100 text-[#111827] pb-12">
+    <div className="min-h-screen bg-gray-100 text-[#111827] pb-12 overflow-x-hidden">
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
       {/* Operational Loket Header */}
       <header className="sticky top-0 z-30 bg-[#090D16] text-white border-b border-white/10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
@@ -531,7 +569,7 @@ export default function GateScanPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
           {/* Kolom Kiri: Kamera QR + Input Manual + Hasil Validasi */}
-          <div className="lg:col-span-7 space-y-4 sm:space-y-5">
+          <div className="lg:col-span-7 min-w-0 space-y-4 sm:space-y-5">
             <section className="rounded-2xl bg-white border border-gray-200 p-4 sm:p-5 space-y-3 sm:space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h1 className="text-base font-extrabold text-[#111827]">
@@ -725,26 +763,6 @@ export default function GateScanPage() {
                 </div>
               )}
 
-              {outcome && (
-                <div
-                  role="status"
-                  className={`rounded-2xl p-4 space-y-1.5 shadow-sm ${
-                    outcome.accepted
-                      ? 'bg-emerald-700 text-white'
-                      : 'bg-red-700 text-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
-                      {outcome.accepted ? 'check_circle' : 'cancel'}
-                    </span>
-                    <p className="text-sm font-extrabold">{outcome.headline}</p>
-                  </div>
-                  <p className="text-xs font-medium text-white/90">{outcome.detail}</p>
-                  <p className="text-[11px] font-mono text-white/75">{outcome.ticketCode}</p>
-                </div>
-              )}
-
               {/* Input Manual Fallback (One-handed mobile friendly) */}
               <form onSubmit={handleManualSubmit} className="space-y-2 pt-0.5">
                 <label
@@ -772,6 +790,26 @@ export default function GateScanPage() {
                   </button>
                 </div>
               </form>
+
+              {outcome && (
+                <div
+                  role="status"
+                  className={`rounded-2xl p-4 space-y-1.5 shadow-sm ${
+                    outcome.accepted
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-red-700 text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                      {outcome.accepted ? 'check_circle' : 'cancel'}
+                    </span>
+                    <p className="text-sm font-extrabold">{outcome.headline}</p>
+                  </div>
+                  <p className="text-xs font-medium text-white/90">{outcome.detail}</p>
+                  <p className="text-[11px] font-mono text-white/75">{outcome.ticketCode}</p>
+                </div>
+              )}
             </section>
 
             {/* Panel Antrean Offline Sync: 1 baris ringkas saat 0 tertunda */}
@@ -848,7 +886,7 @@ export default function GateScanPage() {
           </div>
 
           {/* Kolom Kanan: Daftar Tiket Harian */}
-          <section className="lg:col-span-5 rounded-2xl bg-white border border-gray-200 p-5 space-y-4 h-fit">
+          <section className="lg:col-span-5 min-w-0 rounded-2xl bg-white border border-gray-200 p-4 sm:p-5 space-y-4 h-fit">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-extrabold text-[#111827]">Daftar Tiket Hari Ini</h2>
