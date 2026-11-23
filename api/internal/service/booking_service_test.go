@@ -5,8 +5,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -16,6 +20,8 @@ import (
 type stubBookingRepo struct {
 	createdInput domain.PendingTransactionCreate
 	cutoffSeen   string
+	snapToken    string
+	snapURL      string
 }
 
 func (r *stubBookingRepo) CreateBookingTx(_ context.Context, input domain.PendingTransactionCreate, _ []string, _ map[string]int) (domain.TransactionDTO, error) {
@@ -23,8 +29,23 @@ func (r *stubBookingRepo) CreateBookingTx(_ context.Context, input domain.Pendin
 	return domain.TransactionDTO{
 		ID:            "tx-1",
 		InvoiceNumber: input.InvoiceNumber,
+		TotalAmount:   105000,
 		PaymentStatus: domain.PaymentStatusPending,
 	}, nil
+}
+
+func (r *stubBookingRepo) FindCustomerContact(_ context.Context, _ string) (domain.CustomerContact, error) {
+	return domain.CustomerContact{
+		FullName:    "Raka Pratama",
+		Email:       "raka.pratama@gmail.com",
+		PhoneNumber: "081234567890",
+	}, nil
+}
+
+func (r *stubBookingRepo) UpdateTransactionSnap(_ context.Context, _, snapToken, snapRedirectURL string) error {
+	r.snapToken = snapToken
+	r.snapURL = snapRedirectURL
+	return nil
 }
 
 func (r *stubBookingRepo) FindBookingByID(_ context.Context, transactionID, _ string) (domain.TransactionDTO, error) {
@@ -77,7 +98,7 @@ func TestCalculateFeeAndHMAC(t *testing.T) {
 
 func TestBookingPastDateAndMaintenanceCutoff(t *testing.T) {
 	repo := &stubBookingRepo{}
-	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "", "development")
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "", "development", nil)
 	ctx := context.Background()
 
 	// Invalid venueId UUID must fail validation (400)
@@ -139,7 +160,7 @@ func TestBookingPastDateAndMaintenanceCutoff(t *testing.T) {
 func TestMidtransWebhookSignatureVerification(t *testing.T) {
 	const serverKey = "SB-Mid-server-test-key"
 	repo := &stubBookingRepo{}
-	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "production")
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "production", nil)
 	ctx := context.Background()
 
 	orderID := "PWL/INV/20261121/0042"
@@ -172,5 +193,60 @@ func TestMidtransWebhookSignatureVerification(t *testing.T) {
 		TransactionStatus: "settlement",
 	}); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized for tampered Midtrans webhook, got %v", err)
+	}
+}
+
+func TestCreateBookingWithMidtransSnap(t *testing.T) {
+	const serverKey = "SB-Mid-server-snap-test"
+	var gotAuth string
+	var gotOrderID string
+	var gotGross int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		var payload struct {
+			TransactionDetails struct {
+				OrderID     string `json:"order_id"`
+				GrossAmount int64  `json:"gross_amount"`
+			} `json:"transaction_details"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode snap body: %v", err)
+		}
+		gotOrderID = payload.TransactionDetails.OrderID
+		gotGross = payload.TransactionDetails.GrossAmount
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"snap-tok-123","redirect_url":"https://app.sandbox.midtrans.com/snap/v2/vtweb/snap-tok-123"}`))
+	}))
+	defer srv.Close()
+
+	snapClient := &HTTPMidtransSnapClient{
+		endpoint:  srv.URL,
+		serverKey: serverKey,
+		client:    srv.Client(),
+	}
+	repo := &stubBookingRepo{}
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "development", snapClient)
+
+	futureDate := time.Now().In(wibZone).AddDate(0, 0, 2).Format("2006-01-02")
+	tx, err := svc.CreateBooking(context.Background(), "usr-1", domain.CreateBookingRequest{
+		VenueID:     "11111111-1111-1111-1111-111111111111",
+		BookingDate: futureDate,
+		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 2}},
+	})
+	if err != nil {
+		t.Fatalf("CreateBooking with Snap: %v", err)
+	}
+
+	expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(serverKey+":"))
+	if gotAuth != expectedAuth {
+		t.Fatalf("expected Basic auth %q, got %q", expectedAuth, gotAuth)
+	}
+	if gotOrderID != tx.InvoiceNumber || gotGross != 105000 {
+		t.Fatalf("unexpected Snap payload order=%s gross=%d", gotOrderID, gotGross)
+	}
+	if tx.SnapToken != "snap-tok-123" || repo.snapToken != "snap-tok-123" {
+		t.Fatalf("expected snapToken persisted and returned, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
 	}
 }

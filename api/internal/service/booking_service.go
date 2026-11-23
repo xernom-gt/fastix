@@ -1,14 +1,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -22,20 +26,95 @@ const (
 	autoRefundAfterDays = 7
 )
 
+// SnapClient creates Midtrans Snap checkout tokens.
+type SnapClient interface {
+	CreateTransaction(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (domain.SnapCreateResponse, error)
+}
+
+// HTTPMidtransSnapClient calls Midtrans Snap API over HTTPS.
+type HTTPMidtransSnapClient struct {
+	endpoint  string
+	serverKey string
+	client    *http.Client
+}
+
+// NewHTTPMidtransSnapClient configures a Snap client for sandbox or production.
+func NewHTTPMidtransSnapClient(midtransEnv, serverKey string) *HTTPMidtransSnapClient {
+	endpoint := "https://app.sandbox.midtrans.com/snap/v1/transactions"
+	if strings.EqualFold(midtransEnv, "production") {
+		endpoint = "https://app.midtrans.com/snap/v1/transactions"
+	}
+	return &HTTPMidtransSnapClient{
+		endpoint:  endpoint,
+		serverKey: serverKey,
+		client:    &http.Client{Timeout: 8 * time.Second},
+	}
+}
+
+func (c *HTTPMidtransSnapClient) CreateTransaction(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (domain.SnapCreateResponse, error) {
+	body := map[string]any{
+		"transaction_details": map[string]any{
+			"order_id":     orderID,
+			"gross_amount": grossAmount,
+		},
+		"expiry": map[string]any{
+			"unit":     "minutes",
+			"duration": 15,
+		},
+		"customer_details": map[string]any{
+			"first_name": customer.FullName,
+			"email":      customer.Email,
+			"phone":      customer.PhoneNumber,
+		},
+	}
+
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return domain.SnapCreateResponse{}, fmt.Errorf("marshal snap request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(rawBody))
+	if err != nil {
+		return domain.SnapCreateResponse{}, fmt.Errorf("build snap request: %w", err)
+	}
+	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
+	req.Header.Set("Authorization", "Basic "+authToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return domain.SnapCreateResponse{}, fmt.Errorf("request midtrans snap: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return domain.SnapCreateResponse{}, fmt.Errorf("midtrans snap returned status %d", resp.StatusCode)
+	}
+
+	var snapResp domain.SnapCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&snapResp); err != nil {
+		return domain.SnapCreateResponse{}, fmt.Errorf("decode snap response: %w", err)
+	}
+	return snapResp, nil
+}
+
 // BookingService handles atomic bookings, QRIS settlement, e-tickets, and scheduled workers.
 type BookingService struct {
 	repo              repository.BookingRepository
 	qrHMACSecret      string
 	midtransServerKey string
+	snapClient        SnapClient
 	isDev             bool
 }
 
 // NewBookingService constructs a BookingService.
-func NewBookingService(repo repository.BookingRepository, qrHMACSecret, midtransServerKey, appEnv string) *BookingService {
+func NewBookingService(repo repository.BookingRepository, qrHMACSecret, midtransServerKey, appEnv string, snapClient SnapClient) *BookingService {
 	return &BookingService{
 		repo:              repo,
 		qrHMACSecret:      qrHMACSecret,
 		midtransServerKey: midtransServerKey,
+		snapClient:        snapClient,
 		isDev:             strings.EqualFold(appEnv, "development"),
 	}
 }
@@ -91,7 +170,28 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 		ExpiredAt:     time.Now().UTC().Add(bookingLockTTL),
 	}
 
-	return s.repo.CreateBookingTx(ctx, pending, sortedTicketIDs, qtyByTicket)
+	tx, err := s.repo.CreateBookingTx(ctx, pending, sortedTicketIDs, qtyByTicket)
+	if err != nil {
+		return domain.TransactionDTO{}, err
+	}
+
+	if s.midtransServerKey != "" && s.snapClient != nil {
+		contact, contactErr := s.repo.FindCustomerContact(ctx, customerID)
+		if contactErr != nil {
+			return domain.TransactionDTO{}, contactErr
+		}
+		snapResp, snapErr := s.snapClient.CreateTransaction(ctx, tx.InvoiceNumber, tx.TotalAmount, contact)
+		if snapErr != nil {
+			return domain.TransactionDTO{}, fmt.Errorf("create midtrans snap token: %w", snapErr)
+		}
+		if updateErr := s.repo.UpdateTransactionSnap(ctx, tx.ID, snapResp.Token, snapResp.RedirectURL); updateErr != nil {
+			return domain.TransactionDTO{}, updateErr
+		}
+		tx.SnapToken = snapResp.Token
+		tx.SnapRedirectURL = snapResp.RedirectURL
+	}
+
+	return tx, nil
 }
 
 func (s *BookingService) GetBooking(ctx context.Context, invoiceID, customerID string) (domain.TransactionDTO, error) {

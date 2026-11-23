@@ -39,22 +39,37 @@ type TransactionItemDTO struct {
 
 // TransactionDTO represents a booking invoice returned by booking endpoints.
 type TransactionDTO struct {
-	ID            string               `json:"id"`
-	InvoiceNumber string               `json:"invoiceNumber"`
-	VenueID       string               `json:"venueId"`
-	VenueCode     string               `json:"venueCode"`
-	VenueName     string               `json:"venueName"`
-	VenueAddress  string               `json:"venueAddress"`
-	BookingDate   string               `json:"bookingDate"`
-	Items         []TransactionItemDTO `json:"items"`
-	Subtotal      int64                `json:"subtotal"`
-	PlatformFee   int64                `json:"platformFee"`
-	TotalAmount   int64                `json:"totalAmount"`
-	PaymentStatus string               `json:"paymentStatus"`
-	QRString      string               `json:"qrString"`
-	ExpiredAt     string               `json:"expiredAt"`
-	PaidAt        *string              `json:"paidAt,omitempty"`
-	CreatedAt     string               `json:"createdAt"`
+	ID              string               `json:"id"`
+	InvoiceNumber   string               `json:"invoiceNumber"`
+	VenueID         string               `json:"venueId"`
+	VenueCode       string               `json:"venueCode"`
+	VenueName       string               `json:"venueName"`
+	VenueAddress    string               `json:"venueAddress"`
+	BookingDate     string               `json:"bookingDate"`
+	Items           []TransactionItemDTO `json:"items"`
+	Subtotal        int64                `json:"subtotal"`
+	PlatformFee     int64                `json:"platformFee"`
+	TotalAmount     int64                `json:"totalAmount"`
+	PaymentStatus   string               `json:"paymentStatus"`
+	QRString        string               `json:"qrString"`
+	SnapToken       string               `json:"snapToken,omitempty"`
+	SnapRedirectURL string               `json:"snapRedirectUrl,omitempty"`
+	ExpiredAt       string               `json:"expiredAt"`
+	PaidAt          *string              `json:"paidAt,omitempty"`
+	CreatedAt       string               `json:"createdAt"`
+}
+
+// CustomerContact holds tourist identity fields for payment gateway checkout.
+type CustomerContact struct {
+	FullName    string
+	Email       string
+	PhoneNumber string
+}
+
+// SnapCreateResponse holds the token and redirect URL returned by Midtrans Snap.
+type SnapCreateResponse struct {
+	Token       string `json:"token"`
+	RedirectURL string `json:"redirect_url"`
 }
 
 // QRISWebhookRequest represents either a Midtrans HTTP notification or internal QRIS callback.
