@@ -21,10 +21,11 @@ declare global {
   }
 }
 
-const MIDTRANS_CLIENT_KEY =
-  (import.meta.env.VITE_MIDTRANS_CLIENT_KEY as string | undefined)?.trim() || '';
 const MIDTRANS_ENV =
   (import.meta.env.VITE_MIDTRANS_ENV as string | undefined)?.trim() || 'sandbox';
+const MIDTRANS_CLIENT_KEY =
+  (import.meta.env.VITE_MIDTRANS_CLIENT_KEY as string | undefined)?.trim() ||
+  (MIDTRANS_ENV === 'production' ? '' : 'SB-Mid-client-sE4oCCcuGuVAqdxbn7x76s2D');
 const MIDTRANS_SNAP_URL =
   MIDTRANS_ENV === 'production'
     ? 'https://app.midtrans.com/snap/snap.js'
@@ -77,7 +78,13 @@ export default function CheckoutPage() {
   useEffect(() => {
     if (!MIDTRANS_CLIENT_KEY && !tx?.snapToken) return;
     const scriptId = 'fastix-midtrans-snap';
-    if (document.getElementById(scriptId)) return;
+    const existing = document.getElementById(scriptId) as HTMLScriptElement | null;
+    if (existing) {
+      if (MIDTRANS_CLIENT_KEY && !existing.getAttribute('data-client-key')) {
+        existing.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
+      }
+      return;
+    }
 
     const script = document.createElement('script');
     script.id = scriptId;
@@ -171,6 +178,13 @@ export default function CheckoutPage() {
     setPayError('Popup pembayaran Midtrans sedang dimuat. Silakan coba beberapa saat lagi.');
   };
 
+  const handleOpenMidtransTab = () => {
+    if (!tx.snapRedirectUrl) return;
+    setPayError('');
+    window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
+    void fetchBooking(tx.id);
+  };
+
   const handleSimulatePaid = async () => {
     setPayError('');
     setIsPaying(true);
@@ -225,6 +239,9 @@ export default function CheckoutPage() {
               <p className="text-xs text-gray-600">
                 Pindai kode QRIS di atas melalui aplikasi bank atau dompet digital Anda untuk
                 menyelesaikan pembayaran.
+              </p>
+              <p className="text-xs font-medium text-gray-500">
+                Mendukung pembayaran langsung via Midtrans Snap &amp; Simulator QRIS Sandbox
               </p>
             </>
           ) : (
@@ -296,23 +313,47 @@ export default function CheckoutPage() {
                 </p>
               )}
               {tx.snapToken ? (
-                <button
-                  type="button"
-                  disabled={isPaying}
-                  onClick={handleMidtransPay}
-                  className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
-                >
-                  {isPaying ? 'Memeriksa Status...' : 'Bayar dengan Midtrans'}
-                </button>
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    disabled={isPaying}
+                    onClick={handleMidtransPay}
+                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                  >
+                    {isPaying ? 'Memeriksa Status...' : 'Bayar dengan Midtrans (Popup Snap)'}
+                  </button>
+                  {tx.snapRedirectUrl && (
+                    <button
+                      type="button"
+                      disabled={isPaying}
+                      onClick={handleOpenMidtransTab}
+                      className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-900 hover:bg-gray-50 disabled:opacity-60 text-gray-900 text-xs font-bold transition-colors"
+                    >
+                      Buka Halaman Pembayaran Midtrans (Tab Baru)
+                    </button>
+                  )}
+                </div>
               ) : (
-                <button
-                  type="button"
-                  disabled={isPaying}
-                  onClick={handleSimulatePaid}
-                  className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
-                >
-                  {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
-                </button>
+                <div className="space-y-2.5">
+                  {tx.snapRedirectUrl && (
+                    <button
+                      type="button"
+                      disabled={isPaying}
+                      onClick={handleOpenMidtransTab}
+                      className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                    >
+                      Buka Halaman Pembayaran Midtrans (Tab Baru)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isPaying}
+                    onClick={handleSimulatePaid}
+                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                  >
+                    {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
+                  </button>
+                </div>
               )}
               <button
                 type="button"
