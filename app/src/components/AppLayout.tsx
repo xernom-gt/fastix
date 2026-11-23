@@ -122,7 +122,7 @@ export const AppLayout: React.FC = () => {
                 </li>
                 <li>
                   <a href={`${LANDING_URL}#keunggulan`} className="hover:text-white transition-colors">
-                    Cara Kerja Escrow
+                    Cara Kerja Pencairan Dana
                   </a>
                 </li>
                 <li>

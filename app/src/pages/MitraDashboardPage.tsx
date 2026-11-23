@@ -55,7 +55,7 @@ function formatShortDateTime(iso: string): string {
 
 const MUTATION_META: Record<string, { label: string; badgeClass: string }> = {
   PAYIN_INFLOW: { label: 'Check-in Gate (H+1)', badgeClass: 'bg-amber-50 text-amber-800' },
-  HOLDING_RELEASED: { label: 'Rilis Escrow H+1', badgeClass: 'bg-emerald-50 text-emerald-800' },
+  HOLDING_RELEASED: { label: 'Pencairan H+1', badgeClass: 'bg-emerald-50 text-emerald-800' },
   PAYOUT_WITHDRAW: { label: 'Penarikan Dana', badgeClass: 'bg-gray-100 text-gray-800' },
   PAYOUT_REFUND: { label: 'Pengembalian Gagal', badgeClass: 'bg-blue-50 text-blue-800' },
   UNCHECKED_HOLDING: { label: 'Belum Check-in', badgeClass: 'bg-indigo-50 text-indigo-800' },
@@ -72,7 +72,7 @@ const PAYOUT_STATUS_META: Record<string, { label: string; badgeClass: string }> 
 
 const TAB_HEADINGS: Record<OwnerTab, string> = {
   tickets: 'Kelola Tiket & Kuota Harian',
-  finance: 'Keuangan, Escrow H+1 & Payout',
+  finance: 'Keuangan & Pencairan Dana',
   profile: 'Profil Destinasi Wisata',
   staff: 'Akun & PIN Staff Gate',
   overview: 'Ringkasan Kuota Hari Ini',
@@ -341,7 +341,7 @@ export default function MitraDashboardPage() {
             amount: ticketNet,
             grossAmount: ticketGross,
             platformFee: ticketFee,
-            description: `Rilis escrow H+1 tiket check-in ${tk.ticketCode} (${tk.ticketTitle})`,
+            description: `Pencairan H+1 tiket check-in ${tk.ticketCode} (${tk.ticketTitle})`,
             createdAt: tk.redeemedAt ?? tk.paidAt,
           });
         } else {
@@ -793,7 +793,7 @@ export default function MitraDashboardPage() {
 
       {activeTab === 'finance' ? (
         <div className="space-y-6">
-          {/* Ringkasan Saldo & Escrow H+1 */}
+          {/* Ringkasan Saldo & Pencairan Dana */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
             <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-1">
               <p className="text-[11px] font-semibold text-gray-500">Omzet Kotor</p>
@@ -844,11 +844,7 @@ export default function MitraDashboardPage() {
               verified_user
             </span>
             <p className="leading-relaxed">
-              <strong className="text-[#111827]">Aturan Escrow Fastix:</strong> Saldo Owner (Saldo
-              Tertahan &amp; Siap Tarik) hanya bersumber dari tiket yang telah dipindai di loket gate
-              (<strong>REDEEMED</strong>). Tiket yang masih <strong>VALID</strong> berada di holding
-              platform, sedangkan tiket yang tidak dipakai melewati 7 hari di-refund otomatis (Rp 0
-              bagi Owner).
+              <strong className="text-[#111827]">Aturan Pencairan Saldo:</strong> Saldo Pengelola Wisata (Saldo Tertahan &amp; Siap Tarik) bersumber dari tiket yang telah dipindai di pintu masuk (<strong>REDEEMED</strong>). Dana tiket yang masih <strong>VALID</strong> disimpan aman oleh sistem hingga pengunjung berkunjung, dan akan dicairkan otomatis H+1 setelah kunjungan.
             </p>
           </div>
 
