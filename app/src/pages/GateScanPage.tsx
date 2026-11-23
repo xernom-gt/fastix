@@ -9,6 +9,7 @@ import {
   saveGateSession,
   saveOfflineQueue,
   type OfflineScanQueueItem,
+  type StaffGateAccount,
 } from '../utils/operationsStorage';
 
 const API_BASE_URL =
@@ -70,7 +71,8 @@ function formatScanTime(iso?: string): string {
 
 export default function GateScanPage() {
   const navigate = useNavigate();
-  const staff = loadGateSession();
+  const [staff, setStaff] = useState<StaffGateAccount | null>(() => loadGateSession());
+  const venueId = staff?.venueId;
   const { tickets, redeemTicket } = useBookings();
 
   const [offlineQueue, setOfflineQueue] = useState<OfflineScanQueueItem[]>(loadOfflineQueue);
@@ -175,11 +177,13 @@ export default function GateScanPage() {
     }
     localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
     saveGateSession(null);
+    setStaff(null);
+    setApiTickets(null);
     navigate('/gate/login', { replace: true });
   }, [navigate]);
 
   const fetchTodayTickets = useCallback(async () => {
-    if (!gateToken || !staff) return;
+    if (!gateToken || !venueId) return;
     setIsLoadingTickets(true);
     try {
       const response = await fetch(`${API_BASE_URL}/gate/tickets/today`, {
@@ -204,13 +208,13 @@ export default function GateScanPage() {
     } finally {
       setIsLoadingTickets(false);
     }
-  }, [gateToken, staff, handleUnauthorized]);
+  }, [gateToken, venueId, handleUnauthorized]);
 
   useEffect(() => {
-    if (!isOfflineMode && gateToken) {
+    if (!isOfflineMode && gateToken && venueId) {
       void fetchTodayTickets();
     }
-  }, [isOfflineMode, gateToken, fetchTodayTickets]);
+  }, [isOfflineMode, gateToken, venueId, fetchTodayTickets]);
 
   const venueTickets = useMemo(() => {
     if (!staff) return [];
@@ -490,6 +494,8 @@ export default function GateScanPage() {
     stopCamera();
     localStorage.removeItem(GATE_TOKEN_STORAGE_KEY);
     saveGateSession(null);
+    setStaff(null);
+    setApiTickets(null);
     navigate('/gate/login', { replace: true });
   };
 
