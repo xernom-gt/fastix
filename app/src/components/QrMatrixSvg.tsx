@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import QRCode from 'qrcode';
 
 interface QrMatrixSvgProps {
   value: string;
@@ -6,52 +7,44 @@ interface QrMatrixSvgProps {
 }
 
 /**
- * Menghasilkan representasi visual matriks QR deterministik dari string payload.
+ * Menghasilkan representasi visual matriks QR berstandar ISO/IEC 18004
+ * agar dapat dipindai secara optik oleh kamera loket gate (jsQR) dan aplikasi e-wallet.
  */
 export const QrMatrixSvg: React.FC<QrMatrixSvgProps> = ({ value, size = 148 }) => {
-  const grid = 21;
-  let seed = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    seed ^= value.charCodeAt(i);
-    seed = Math.imul(seed, 16777619);
-  }
+  const { grid, pathData } = useMemo(() => {
+    const payload = value.trim() || 'FASTIX';
+    const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' });
+    const moduleCount = qr.modules.size;
+    const quietZone = 2;
+    const totalGrid = moduleCount + quietZone * 2;
 
-  const isFinder = (r: number, c: number) =>
-    (r < 7 && c < 7) || (r < 7 && c >= grid - 7) || (r >= grid - 7 && c < 7);
-
-  const cells: React.ReactNode[] = [];
-  for (let r = 0; r < grid; r++) {
-    for (let c = 0; c < grid; c++) {
-      if (isFinder(r, c)) continue;
-      const bit = ((seed >>> ((r * grid + c) % 24)) ^ (r * 7 + c * 13 + value.length)) & 1;
-      if (bit === 1) {
-        cells.push(<rect key={`${r}-${c}`} x={c} y={r} width={1} height={1} fill="#111827" />);
+    const segments: string[] = [];
+    for (let r = 0; r < moduleCount; r++) {
+      for (let c = 0; c < moduleCount; c++) {
+        if (qr.modules.get(r, c)) {
+          segments.push(`M${c + quietZone},${r + quietZone}h1v1h-1z`);
+        }
       }
     }
-  }
 
-  const renderFinder = (x: number, y: number) => (
-    <g>
-      <rect x={x} y={y} width={7} height={7} fill="#111827" />
-      <rect x={x + 1} y={y + 1} width={5} height={5} fill="#FFFFFF" />
-      <rect x={x + 2} y={y + 2} width={3} height={3} fill="#111827" />
-    </g>
-  );
+    return {
+      grid: totalGrid,
+      pathData: segments.join(''),
+    };
+  }, [value]);
 
   return (
     <svg
       width={size}
       height={size}
       viewBox={`0 0 ${grid} ${grid}`}
+      shapeRendering="crispEdges"
       role="img"
       aria-label={`Kode QR untuk ${value}`}
       className="block"
     >
       <rect width={grid} height={grid} fill="#FFFFFF" />
-      {renderFinder(0, 0)}
-      {renderFinder(grid - 7, 0)}
-      {renderFinder(0, grid - 7)}
-      {cells}
+      <path d={pathData} fill="#111827" />
     </svg>
   );
 };
