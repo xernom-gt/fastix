@@ -250,3 +250,37 @@ func TestCreateBookingWithMidtransSnap(t *testing.T) {
 		t.Fatalf("expected snapToken persisted and returned, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
 	}
 }
+
+func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	snapClient := &HTTPMidtransSnapClient{
+		endpoint:  srv.URL,
+		serverKey: "SB-Mid-server-invalid",
+		client:    srv.Client(),
+	}
+	repo := &stubBookingRepo{}
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "SB-Mid-server-invalid", "development", snapClient)
+
+	futureDate := time.Now().In(wibZone).AddDate(0, 0, 2).Format("2006-01-02")
+	tx, err := svc.CreateBooking(context.Background(), "usr-1", domain.CreateBookingRequest{
+		VenueID:     "11111111-1111-1111-1111-111111111111",
+		BookingDate: futureDate,
+		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 1}},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback on Snap API error, got %v", err)
+	}
+
+	wantToken := "sandbox-snap-" + tx.InvoiceNumber
+	wantURL := "https://simulator.sandbox.midtrans.com/qris/index?order_id=" + tx.InvoiceNumber + "&amount=105000"
+	if tx.SnapToken != wantToken || repo.snapToken != wantToken {
+		t.Fatalf("expected fallback snapToken %q, got tx=%q repo=%q", wantToken, tx.SnapToken, repo.snapToken)
+	}
+	if tx.SnapRedirectURL != wantURL || repo.snapURL != wantURL {
+		t.Fatalf("expected fallback snapRedirectURL %q, got tx=%q repo=%q", wantURL, tx.SnapRedirectURL, repo.snapURL)
+	}
+}

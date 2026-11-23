@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"fastix/api/internal/domain"
@@ -74,10 +73,16 @@ func TestListVenuesFuzzyFallback(t *testing.T) {
 	}
 }
 
-func TestGetVenueDetailRejectsNonUUID(t *testing.T) {
+func TestGetVenueDetailAllowsSlugAndCode(t *testing.T) {
 	svc := NewDiscoveryService(&stubDiscoveryRepo{})
-	_, err := svc.GetVenueDetail(context.Background(), "tirta-gangga", "2026-11-23")
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound for non-UUID venueId, got %v", err)
+
+	for _, id := range []string{"tirta-gangga", "LOKA-0142", "11111111-1111-1111-1111-111111111111"} {
+		detail, err := svc.GetVenueDetail(context.Background(), id, "2026-11-23")
+		if err != nil {
+			t.Fatalf("expected GetVenueDetail(%q) to succeed, got %v", id, err)
+		}
+		if detail.ID != id {
+			t.Fatalf("expected detail.ID=%q, got %q", id, detail.ID)
+		}
 	}
 }
