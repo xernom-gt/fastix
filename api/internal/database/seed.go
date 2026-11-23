@@ -8,14 +8,19 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// SeedDev populates initial demo owner, venues, tickets, and gate staff when venues is empty.
+// SeedDev populates initial demo accounts, venues, tickets, and gate staff in development.
 func SeedDev(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	customerSeeded, err := seedDefaultCustomer(ctx, pool)
+	if err != nil {
+		return false, err
+	}
+
 	var hasVenues bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM venues LIMIT 1)`).Scan(&hasVenues); err != nil {
-		return false, fmt.Errorf("check existing venues: %w", err)
+		return customerSeeded, fmt.Errorf("check existing venues: %w", err)
 	}
 	if hasVenues {
-		return false, nil
+		return customerSeeded, nil
 	}
 
 	ownerPasswordHash, err := bcrypt.GenerateFromPassword([]byte("fastixdev123"), bcrypt.DefaultCost)
@@ -208,4 +213,21 @@ func SeedDev(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 		return false, fmt.Errorf("commit dev seed tx: %w", err)
 	}
 	return true, nil
+}
+
+func seedDefaultCustomer(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("fastixdev123"), bcrypt.DefaultCost)
+	if err != nil {
+		return false, fmt.Errorf("hash demo customer password: %w", err)
+	}
+
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO users (phone_number, full_name, email, password_hash, role, is_verified)
+		VALUES ('081234567890', 'Raka Pratama', 'raka.pratama@gmail.com', $1, 'TOURIST', TRUE)
+		ON CONFLICT DO NOTHING
+	`, string(passwordHash))
+	if err != nil {
+		return false, fmt.Errorf("seed demo customer: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
