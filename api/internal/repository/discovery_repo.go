@@ -185,14 +185,14 @@ func buildSearchVenuesQueries(filter domain.VenueListFilter, normalizedQuery str
 			v.latitude::float8,
 			v.longitude::float8,
 			COALESCE((
-				SELECT GREATEST(0, COALESCE(SUM(t.daily_quota), 0) - COALESCE((
+				SELECT SUM(GREATEST(0, t.daily_quota - COALESCE((
 					SELECT SUM(ti.quantity)
 					FROM transaction_items ti
 					JOIN transactions tr ON tr.id = ti.transaction_id
 					WHERE ti.ticket_id = t.id
 					  AND ti.booking_date = $` + strconv.Itoa(dateIdx) + `::date
 					  AND (tr.payment_status = 'PAID' OR (tr.payment_status = 'PENDING' AND tr.expired_at > NOW()))
-				), 0))
+				), 0)))
 				FROM tickets t
 				WHERE t.venue_id = v.id AND t.is_active = TRUE
 			), 0)::int AS remaining_quota
