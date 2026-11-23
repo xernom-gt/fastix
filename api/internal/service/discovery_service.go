@@ -152,9 +152,6 @@ func (s *DiscoveryService) GetVenueDetail(ctx context.Context, venueID, tanggal 
 	if venueID == "" {
 		return domain.VenueDetail{}, domain.NewAppError(domain.ErrValidation, "VALIDATION_ERROR", "ID destinasi wajib diisi.", nil)
 	}
-	if !isValidUUID(venueID) {
-		return domain.VenueDetail{}, domain.NewAppError(domain.ErrNotFound, "VENUE_NOT_FOUND", "Destinasi wisata tidak ditemukan.", nil)
-	}
 	if tanggal == "" {
 		tanggal = time.Now().In(wibZone).Format("2006-01-02")
 	} else if _, err := time.Parse("2006-01-02", tanggal); err != nil {

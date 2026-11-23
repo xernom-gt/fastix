@@ -208,6 +208,11 @@ func (r *PgxDiscoveryRepository) FindVenueDetailByID(ctx context.Context, venueI
 	var detail domain.VenueDetail
 	var lat, lng *float64
 
+	whereCond := `(venue_code = UPPER($1) OR LOWER(REPLACE(name, ' ', '-')) LIKE '%' || LOWER($1) || '%') AND is_published = TRUE`
+	if isValidUUID(venueID) {
+		whereCond = `id = $1::uuid AND is_published = TRUE`
+	}
+
 	err := r.pool.QueryRow(ctx, `
 		SELECT
 			id::text, venue_code, name, kota_kode, lokasi, address, jam_buka,
@@ -215,7 +220,7 @@ func (r *PgxDiscoveryRepository) FindVenueDetailByID(ctx context.Context, venueI
 			jumlah_ulasan, gambar_url, gambar_alt, fasilitas, latitude::float8,
 			longitude::float8, is_published
 		FROM venues
-		WHERE id = $1::uuid AND is_published = TRUE
+		WHERE `+whereCond+`
 	`, venueID).Scan(
 		&detail.ID,
 		&detail.VenueCode,
@@ -269,7 +274,7 @@ func (r *PgxDiscoveryRepository) FindVenueDetailByID(ctx context.Context, venueI
 		WHERE t.venue_id = $1::uuid AND t.is_active = TRUE
 		GROUP BY t.id
 		ORDER BY t.price ASC, t.created_at ASC
-	`, venueID, tanggal)
+	`, detail.ID, tanggal)
 	if err != nil {
 		return domain.VenueDetail{}, fmt.Errorf("query venue tickets: %w", err)
 	}
@@ -297,4 +302,23 @@ func (r *PgxDiscoveryRepository) FindVenueDetailByID(ctx context.Context, venueI
 		return domain.VenueDetail{}, fmt.Errorf("iterate venue tickets: %w", err)
 	}
 	return detail, nil
+}
+
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		c := s[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
