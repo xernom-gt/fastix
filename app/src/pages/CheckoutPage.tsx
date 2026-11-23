@@ -137,6 +137,7 @@ export default function CheckoutPage() {
 
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const ss = String(secondsLeft % 60).padStart(2, '0');
+  const isRealSnapToken = Boolean(tx.snapToken && !tx.snapToken.startsWith('sandbox-snap-'));
 
   const syncStatusAfterSnap = async () => {
     setIsPaying(true);
@@ -151,7 +152,23 @@ export default function CheckoutPage() {
     }
   };
 
+  const handleOpenMidtransTab = () => {
+    if (!tx.snapRedirectUrl) return;
+    setPayError('');
+    window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
+    void fetchBooking(tx.id);
+  };
+
   const handleMidtransPay = () => {
+    if (!isRealSnapToken) {
+      if (tx.snapRedirectUrl) {
+        handleOpenMidtransTab();
+      } else {
+        setPayError('Token pembayaran Midtrans tidak valid untuk mode popup.');
+      }
+      return;
+    }
+
     if (!tx.snapToken) return;
     setPayError('');
 
@@ -175,19 +192,11 @@ export default function CheckoutPage() {
     }
 
     if (tx.snapRedirectUrl) {
-      window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
-      void fetchBooking(tx.id);
+      handleOpenMidtransTab();
       return;
     }
 
     setPayError('Popup pembayaran Midtrans sedang dimuat. Silakan coba beberapa saat lagi.');
-  };
-
-  const handleOpenMidtransTab = () => {
-    if (!tx.snapRedirectUrl) return;
-    setPayError('');
-    window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
-    void fetchBooking(tx.id);
   };
 
   const handleSimulatePaid = async () => {
@@ -318,7 +327,7 @@ export default function CheckoutPage() {
                 </p>
               )}
               <div className="space-y-2.5">
-                {tx.snapToken ? (
+                {isRealSnapToken ? (
                   <button
                     type="button"
                     disabled={isPaying}
@@ -334,13 +343,17 @@ export default function CheckoutPage() {
                     type="button"
                     disabled={isPaying}
                     onClick={handleOpenMidtransTab}
-                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-900 hover:bg-gray-50 disabled:opacity-60 text-gray-900 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className={`w-full min-h-[44px] px-4 rounded-xl transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 font-bold ${
+                      isRealSnapToken
+                        ? 'py-2.5 border border-gray-900 hover:bg-gray-50 text-gray-900 text-xs'
+                        : 'py-3 bg-gray-900 hover:bg-black text-white text-sm'
+                    }`}
                   >
                     Buka Halaman Pembayaran Midtrans (Tab Baru / Simulator)
                   </button>
                 ) : null}
 
-                {IS_DEV_OR_SANDBOX || !tx.snapToken ? (
+                {IS_DEV_OR_SANDBOX || !isRealSnapToken ? (
                   <button
                     type="button"
                     disabled={isPaying}
