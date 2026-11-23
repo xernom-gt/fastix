@@ -6,6 +6,30 @@ import { QrMatrixSvg } from '../components/QrMatrixSvg';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
 
+interface MidtransSnapCallbacks {
+  onSuccess?: (result: unknown) => void;
+  onPending?: (result: unknown) => void;
+  onError?: (result: unknown) => void;
+  onClose?: () => void;
+}
+
+declare global {
+  interface Window {
+    snap?: {
+      pay: (snapToken: string, callbacks?: MidtransSnapCallbacks) => void;
+    };
+  }
+}
+
+const MIDTRANS_CLIENT_KEY =
+  (import.meta.env.VITE_MIDTRANS_CLIENT_KEY as string | undefined)?.trim() || '';
+const MIDTRANS_ENV =
+  (import.meta.env.VITE_MIDTRANS_ENV as string | undefined)?.trim() || 'sandbox';
+const MIDTRANS_SNAP_URL =
+  MIDTRANS_ENV === 'production'
+    ? 'https://app.midtrans.com/snap/snap.js'
+    : 'https://app.sandbox.midtrans.com/snap/snap.js';
+
 const PAYMENT_STATUS_LABEL: Record<PaymentStatus, { text: string; className: string }> = {
   PENDING: {
     text: 'Menunggu Pembayaran QRIS',
@@ -36,6 +60,7 @@ export default function CheckoutPage() {
   const {
     transactions,
     fetchBooking,
+    refreshTickets,
     simulateWebhookPaid,
     cancelTransaction,
     expireTransaction,
@@ -48,6 +73,21 @@ export default function CheckoutPage() {
     if (!tx) return 0;
     return Math.max(0, Math.floor((new Date(tx.expiredAt).getTime() - Date.now()) / 1000));
   });
+
+  useEffect(() => {
+    if (!MIDTRANS_CLIENT_KEY && !tx?.snapToken) return;
+    const scriptId = 'fastix-midtrans-snap';
+    if (document.getElementById(scriptId)) return;
+
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.src = MIDTRANS_SNAP_URL;
+    if (MIDTRANS_CLIENT_KEY) {
+      script.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
+    }
+    script.async = true;
+    document.body.appendChild(script);
+  }, [tx?.snapToken]);
 
   useEffect(() => {
     if (!invoiceId || !isAuthenticated) return;
@@ -85,6 +125,51 @@ export default function CheckoutPage() {
 
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const ss = String(secondsLeft % 60).padStart(2, '0');
+
+  const syncStatusAfterSnap = async () => {
+    setIsPaying(true);
+    try {
+      const updated = await fetchBooking(tx.id);
+      if (updated?.paymentStatus === 'PAID') {
+        await refreshTickets();
+        navigate('/tiket');
+      }
+    } finally {
+      setIsPaying(false);
+    }
+  };
+
+  const handleMidtransPay = () => {
+    if (!tx.snapToken) return;
+    setPayError('');
+
+    if (window.snap?.pay) {
+      window.snap.pay(tx.snapToken, {
+        onSuccess: () => {
+          void syncStatusAfterSnap();
+        },
+        onPending: () => {
+          void syncStatusAfterSnap();
+        },
+        onError: () => {
+          setPayError('Pembayaran gagal atau ditolak. Silakan coba lagi.');
+          void fetchBooking(tx.id);
+        },
+        onClose: () => {
+          void syncStatusAfterSnap();
+        },
+      });
+      return;
+    }
+
+    if (tx.snapRedirectUrl) {
+      window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
+      void fetchBooking(tx.id);
+      return;
+    }
+
+    setPayError('Popup pembayaran Midtrans sedang dimuat. Silakan coba beberapa saat lagi.');
+  };
 
   const handleSimulatePaid = async () => {
     setPayError('');
@@ -210,14 +295,25 @@ export default function CheckoutPage() {
                   {payError}
                 </p>
               )}
-              <button
-                type="button"
-                disabled={isPaying}
-                onClick={handleSimulatePaid}
-                className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
-              >
-                {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
-              </button>
+              {tx.snapToken ? (
+                <button
+                  type="button"
+                  disabled={isPaying}
+                  onClick={handleMidtransPay}
+                  className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                >
+                  {isPaying ? 'Memeriksa Status...' : 'Bayar dengan Midtrans'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isPaying}
+                  onClick={handleSimulatePaid}
+                  className="w-full py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                >
+                  {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={isPaying}

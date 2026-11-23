@@ -68,6 +68,8 @@ export interface Transaction {
   totalAmount: number;
   paymentStatus: PaymentStatus;
   qrString: string;
+  snapToken?: string;
+  snapRedirectUrl?: string;
   expiredAt: string; // ISO timestamp (+15 menit)
   paidAt?: string;
   createdAt: string;
