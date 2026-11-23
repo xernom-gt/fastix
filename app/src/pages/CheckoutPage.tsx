@@ -30,6 +30,8 @@ const MIDTRANS_SNAP_URL =
   MIDTRANS_ENV === 'production'
     ? 'https://app.midtrans.com/snap/snap.js'
     : 'https://app.sandbox.midtrans.com/snap/snap.js';
+const IS_DEV_OR_SANDBOX =
+  import.meta.env.DEV || MIDTRANS_ENV !== 'production';
 
 const PAYMENT_STATUS_LABEL: Record<PaymentStatus, { text: string; className: string }> = {
   PENDING: {
@@ -123,7 +125,10 @@ export default function CheckoutPage() {
       <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
         <h1 className="text-2xl font-extrabold text-gray-900">Transaksi tidak ditemukan</h1>
         <p className="text-sm text-gray-600">Nomor invoice yang Anda buka tidak tersedia di sesi ini.</p>
-        <Link to="/explore" className="inline-block px-5 py-2.5 rounded-xl bg-gray-900 text-white text-sm font-bold">
+        <Link
+          to="/explore"
+          className="inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors"
+        >
           Kembali ke Katalog
         </Link>
       </div>
@@ -210,7 +215,7 @@ export default function CheckoutPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+          <span className="text-xs font-bold uppercase tracking-wider text-gray-600">
             Invoice Pembayaran QRIS
           </span>
           <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 mt-0.5">{tx.invoiceNumber}</h1>
@@ -227,7 +232,7 @@ export default function CheckoutPage() {
         <div className="md:col-span-6 bg-white border border-gray-200 rounded-2xl p-6 flex flex-col items-center text-center space-y-4">
           {tx.paymentStatus === 'PENDING' ? (
             <>
-              <div className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              <div className="text-xs font-bold uppercase tracking-wider text-gray-600">
                 Batas Waktu Pembayaran
               </div>
               <div className="text-3xl font-extrabold tabular-nums text-gray-900">
@@ -240,7 +245,7 @@ export default function CheckoutPage() {
                 Pindai kode QRIS di atas melalui aplikasi bank atau dompet digital Anda untuk
                 menyelesaikan pembayaran.
               </p>
-              <p className="text-xs font-medium text-gray-500">
+              <p className="text-xs font-medium text-gray-600">
                 Mendukung pembayaran langsung via Midtrans Snap &amp; Simulator QRIS Sandbox
               </p>
             </>
@@ -263,7 +268,7 @@ export default function CheckoutPage() {
               </p>
               <Link
                 to={tx.paymentStatus === 'PAID' ? '/tiket' : `/destinasi/${tx.venueId}`}
-                className="inline-block mt-2 px-5 py-2.5 rounded-xl bg-gray-900 text-white text-sm font-bold"
+                className="inline-flex items-center justify-center min-h-[44px] mt-2 px-5 py-2.5 rounded-xl bg-gray-900 hover:bg-black text-white text-sm font-bold transition-colors"
               >
                 {tx.paymentStatus === 'PAID' ? 'Lihat E-Ticket Saya' : 'Pesan Ulang'}
               </Link>
@@ -312,57 +317,51 @@ export default function CheckoutPage() {
                   {payError}
                 </p>
               )}
-              {tx.snapToken ? (
-                <div className="space-y-2.5">
+              <div className="space-y-2.5">
+                {tx.snapToken ? (
                   <button
                     type="button"
                     disabled={isPaying}
                     onClick={handleMidtransPay}
-                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
                     {isPaying ? 'Memeriksa Status...' : 'Bayar dengan Midtrans (Popup Snap)'}
                   </button>
-                  {tx.snapRedirectUrl && (
-                    <button
-                      type="button"
-                      disabled={isPaying}
-                      onClick={handleOpenMidtransTab}
-                      className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-900 hover:bg-gray-50 disabled:opacity-60 text-gray-900 text-xs font-bold transition-colors"
-                    >
-                      Buka Halaman Pembayaran Midtrans (Tab Baru)
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {tx.snapRedirectUrl && (
-                    <button
-                      type="button"
-                      disabled={isPaying}
-                      onClick={handleOpenMidtransTab}
-                      className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
-                    >
-                      Buka Halaman Pembayaran Midtrans (Tab Baru)
-                    </button>
-                  )}
+                ) : null}
+
+                {tx.snapRedirectUrl ? (
+                  <button
+                    type="button"
+                    disabled={isPaying}
+                    onClick={handleOpenMidtransTab}
+                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-900 hover:bg-gray-50 disabled:opacity-60 text-gray-900 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    Buka Halaman Pembayaran Midtrans (Tab Baru / Simulator)
+                  </button>
+                ) : null}
+
+                {IS_DEV_OR_SANDBOX || !tx.snapToken ? (
                   <button
                     type="button"
                     disabled={isPaying}
                     onClick={handleSimulatePaid}
-                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors"
+                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-emerald-800 hover:bg-emerald-900 disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    {isPaying ? 'Memproses Pembayaran...' : 'Bayar Sekarang'}
+                    {isPaying
+                      ? 'Memproses Konfirmasi...'
+                      : 'Konfirmasi Pembayaran Selesai (Simulasi Lunas)'}
                   </button>
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={isPaying}
-                onClick={() => cancelTransaction(tx.id)}
-                className="w-full py-2.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-700 text-xs font-bold transition-colors"
-              >
-                Batalkan Pesanan
-              </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  disabled={isPaying}
+                  onClick={() => cancelTransaction(tx.id)}
+                  className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-700 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                >
+                  Batalkan Pesanan
+                </button>
+              </div>
             </div>
           )}
         </div>
