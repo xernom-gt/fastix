@@ -45,6 +45,9 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 	if venueID == "" || len(req.Items) == 0 {
 		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "VALIDATION_ERROR", "Destinasi, tanggal kunjungan, dan minimal 1 tiket wajib diisi.", nil)
 	}
+	if !isValidUUID(venueID) {
+		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_VENUE_ID", "Format venueId harus berupa UUID yang valid.", nil)
+	}
 
 	bookingDate, err := time.Parse("2006-01-02", strings.TrimSpace(req.BookingDate))
 	if err != nil {
@@ -59,7 +62,10 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 	qtyByTicket := make(map[string]int, len(req.Items))
 	for _, item := range req.Items {
 		ticketID := strings.TrimSpace(item.TicketID)
-		if ticketID == "" || item.Quantity <= 0 || item.Quantity > 50 {
+		if !isValidUUID(ticketID) {
+			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_TICKET_ID", "Format ticketId harus berupa UUID yang valid.", nil)
+		}
+		if item.Quantity <= 0 || item.Quantity > 50 {
 			return domain.TransactionDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_QUANTITY", "Jumlah tiket harus antara 1 hingga 50 per item.", nil)
 		}
 		qtyByTicket[ticketID] += item.Quantity
@@ -277,4 +283,23 @@ func randomHexUpper(byteLen int) (string, error) {
 		return "", err
 	}
 	return strings.ToUpper(hex.EncodeToString(buf)), nil
+}
+
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		c := s[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

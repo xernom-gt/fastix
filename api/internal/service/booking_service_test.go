@@ -80,12 +80,31 @@ func TestBookingPastDateAndMaintenanceCutoff(t *testing.T) {
 	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "", "development")
 	ctx := context.Background()
 
+	// Invalid venueId UUID must fail validation (400)
+	futureDate := time.Now().In(wibZone).AddDate(0, 0, 2).Format("2006-01-02")
+	if _, err := svc.CreateBooking(ctx, "usr-1", domain.CreateBookingRequest{
+		VenueID:     "not-a-uuid",
+		BookingDate: futureDate,
+		Items:       []domain.BookingItemInput{{TicketID: "11111111-1111-1111-1111-111111111111", Quantity: 1}},
+	}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for invalid venueId UUID, got %v", err)
+	}
+
+	// Invalid ticketId UUID must fail validation (400)
+	if _, err := svc.CreateBooking(ctx, "usr-1", domain.CreateBookingRequest{
+		VenueID:     "11111111-1111-1111-1111-111111111111",
+		BookingDate: futureDate,
+		Items:       []domain.BookingItemInput{{TicketID: "t-1", Quantity: 1}},
+	}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for invalid ticketId UUID, got %v", err)
+	}
+
 	// Past booking date must fail validation
 	yesterday := time.Now().In(wibZone).AddDate(0, 0, -1).Format("2006-01-02")
 	_, err := svc.CreateBooking(ctx, "usr-1", domain.CreateBookingRequest{
-		VenueID:     "v-1",
+		VenueID:     "11111111-1111-1111-1111-111111111111",
 		BookingDate: yesterday,
-		Items:       []domain.BookingItemInput{{TicketID: "t-1", Quantity: 1}},
+		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 1}},
 	})
 	if !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("expected ErrValidation for past date, got %v", err)
