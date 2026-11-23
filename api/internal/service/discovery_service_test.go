@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"fastix/api/internal/domain"
@@ -70,5 +71,13 @@ func TestListVenuesFuzzyFallback(t *testing.T) {
 	}
 	if !res.IsFuzzyMatch || res.CorrectedQuery == nil || *res.CorrectedQuery != "Candi Borobudur" {
 		t.Fatalf("expected fuzzy match suggestion, got %+v", res)
+	}
+}
+
+func TestGetVenueDetailRejectsNonUUID(t *testing.T) {
+	svc := NewDiscoveryService(&stubDiscoveryRepo{})
+	_, err := svc.GetVenueDetail(context.Background(), "tirta-gangga", "2026-11-23")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-UUID venueId, got %v", err)
 	}
 }

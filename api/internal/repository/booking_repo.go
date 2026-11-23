@@ -15,6 +15,8 @@ import (
 // BookingRepository defines atomic persistence for bookings, QRIS settlement, and e-tickets.
 type BookingRepository interface {
 	CreateBookingTx(ctx context.Context, input domain.PendingTransactionCreate, sortedTicketIDs []string, qtyByTicket map[string]int) (domain.TransactionDTO, error)
+	FindCustomerContact(ctx context.Context, customerID string) (domain.CustomerContact, error)
+	UpdateTransactionSnap(ctx context.Context, transactionID, snapToken, snapRedirectURL string) error
 	FindBookingByID(ctx context.Context, transactionID, customerID string) (domain.TransactionDTO, error)
 	FindBookingIDByInvoice(ctx context.Context, invoiceNumber string) (string, error)
 	SettlePaymentTx(ctx context.Context, transactionID, gatewayRef string, buildRedemption func(itemID, venueID, bookingDate string) (domain.RedemptionCreate, error)) (domain.TransactionDTO, error)
@@ -155,6 +157,34 @@ func (r *PgxBookingRepository) CreateBookingTx(
 	return r.FindBookingByID(ctx, txID, input.CustomerID)
 }
 
+func (r *PgxBookingRepository) FindCustomerContact(ctx context.Context, customerID string) (domain.CustomerContact, error) {
+	var contact domain.CustomerContact
+	err := r.pool.QueryRow(ctx, `
+		SELECT full_name, COALESCE(email, ''), phone_number
+		FROM users
+		WHERE id = $1::uuid
+	`, customerID).Scan(&contact.FullName, &contact.Email, &contact.PhoneNumber)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.CustomerContact{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.CustomerContact{}, fmt.Errorf("find customer contact: %w", err)
+	}
+	return contact, nil
+}
+
+func (r *PgxBookingRepository) UpdateTransactionSnap(ctx context.Context, transactionID, snapToken, snapRedirectURL string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE transactions
+		SET snap_token = $2, snap_redirect_url = $3
+		WHERE id = $1::uuid
+	`, transactionID, snapToken, snapRedirectURL)
+	if err != nil {
+		return fmt.Errorf("update transaction snap: %w", err)
+	}
+	return nil
+}
+
 func (r *PgxBookingRepository) FindBookingByID(ctx context.Context, transactionID, customerID string) (domain.TransactionDTO, error) {
 	var dto domain.TransactionDTO
 	var bookingDate time.Time
@@ -166,7 +196,8 @@ func (r *PgxBookingRepository) FindBookingByID(ctx context.Context, transactionI
 		SELECT
 			tr.id::text, tr.invoice_number, tr.venue_id::text, v.venue_code, v.name, v.address,
 			tr.booking_date, tr.total_amount::bigint, tr.platform_fee::bigint,
-			tr.payment_status::text, tr.qr_string, tr.expired_at, tr.paid_at, tr.created_at
+			tr.payment_status::text, tr.qr_string, tr.snap_token, tr.snap_redirect_url,
+			tr.expired_at, tr.paid_at, tr.created_at
 		FROM transactions tr
 		JOIN venues v ON v.id = tr.venue_id
 		WHERE tr.id = $1::uuid
@@ -189,6 +220,8 @@ func (r *PgxBookingRepository) FindBookingByID(ctx context.Context, transactionI
 		&dto.PlatformFee,
 		&dto.PaymentStatus,
 		&dto.QRString,
+		&dto.SnapToken,
+		&dto.SnapRedirectURL,
 		&expiredAt,
 		&paidAt,
 		&createdAt,

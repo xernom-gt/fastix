@@ -1,0 +1,3 @@
+ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS snap_token TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS snap_redirect_url TEXT NOT NULL DEFAULT '';

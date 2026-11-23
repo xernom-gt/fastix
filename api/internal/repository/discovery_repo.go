@@ -69,102 +69,17 @@ func (r *PgxDiscoveryRepository) CreatePartnerLead(ctx context.Context, req doma
 }
 
 func (r *PgxDiscoveryRepository) SearchVenues(ctx context.Context, filter domain.VenueListFilter, normalizedQuery string, useTrigram bool) ([]domain.VenueSummary, int, error) {
-	args := []any{filter.Tanggal}
-	argIdx := 2
-
-	conditions := []string{"v.is_published = TRUE"}
-
-	if filter.Kota != "" && filter.Kota != "all" {
-		conditions = append(conditions, "v.kota_kode = $"+strconv.Itoa(argIdx))
-		args = append(args, filter.Kota)
-		argIdx++
-	}
-
-	if filter.Kategori != "" && filter.Kategori != "all" {
-		conditions = append(conditions, "v.kategori::text = $"+strconv.Itoa(argIdx))
-		args = append(args, filter.Kategori)
-		argIdx++
-	}
-
-	queryParamIdx := 0
-	if normalizedQuery != "" {
-		queryParamIdx = argIdx
-		if useTrigram {
-			args = append(args, normalizedQuery)
-			p := "$" + strconv.Itoa(queryParamIdx)
-			conditions = append(conditions, "(similarity(v.name, "+p+") > 0.2 OR similarity(v.lokasi, "+p+") > 0.2)")
-		} else {
-			args = append(args, "%"+normalizedQuery+"%")
-			p := "$" + strconv.Itoa(queryParamIdx)
-			conditions = append(conditions, "(v.name ILIKE "+p+" OR v.lokasi ILIKE "+p+" OR v.city ILIKE "+p+")")
-		}
-		argIdx++
-	}
-
-	whereClause := strings.Join(conditions, " AND ")
+	countSQL, countArgs, sqlQuery, listArgs := buildSearchVenuesQueries(filter, normalizedQuery, useTrigram)
 
 	var total int
-	countSQL := "SELECT COUNT(*)::int FROM venues v WHERE " + whereClause
-	if err := r.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count venues: %w", err)
 	}
 	if total == 0 {
 		return []domain.VenueSummary{}, 0, nil
 	}
 
-	orderBy := "v.rating DESC, v.jumlah_ulasan DESC"
-	if useTrigram && queryParamIdx > 0 {
-		p := "$" + strconv.Itoa(queryParamIdx)
-		orderBy = "GREATEST(similarity(v.name, " + p + "), similarity(v.lokasi, " + p + ")) DESC, v.rating DESC"
-	} else {
-		switch filter.SortBy {
-		case "harga_asc":
-			orderBy = "v.harga_mulai ASC, v.rating DESC"
-		case "harga_desc":
-			orderBy = "v.harga_mulai DESC, v.rating DESC"
-		case "popularitas":
-			orderBy = "v.jumlah_ulasan DESC, v.rating DESC"
-		}
-	}
-
-	limitIdx := argIdx
-	offsetIdx := argIdx + 1
-	args = append(args, filter.Limit, filter.Offset)
-
-	sqlQuery := `
-		SELECT
-			v.id::text,
-			v.venue_code,
-			v.name,
-			v.kota_kode,
-			v.lokasi,
-			v.kategori::text,
-			v.harga_mulai::bigint,
-			v.rating::float8,
-			v.jumlah_ulasan,
-			v.gambar_url,
-			v.gambar_alt,
-			v.is_published,
-			v.latitude::float8,
-			v.longitude::float8,
-			COALESCE((
-				SELECT GREATEST(0, COALESCE(SUM(t.daily_quota), 0) - COALESCE((
-					SELECT SUM(ti.quantity)
-					FROM transaction_items ti
-					JOIN transactions tr ON tr.id = ti.transaction_id
-					WHERE ti.ticket_id = t.id
-					  AND ti.booking_date = $1::date
-					  AND (tr.payment_status = 'PAID' OR (tr.payment_status = 'PENDING' AND tr.expired_at > NOW()))
-				), 0))
-				FROM tickets t
-				WHERE t.venue_id = v.id AND t.is_active = TRUE
-			), 0)::int AS remaining_quota
-		FROM venues v
-		WHERE ` + whereClause + `
-		ORDER BY ` + orderBy + `
-		LIMIT $` + strconv.Itoa(limitIdx) + ` OFFSET $` + strconv.Itoa(offsetIdx)
-
-	rows, err := r.pool.Query(ctx, sqlQuery, args...)
+	rows, err := r.pool.Query(ctx, sqlQuery, listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query venues: %w", err)
 	}
@@ -196,6 +111,97 @@ func (r *PgxDiscoveryRepository) SearchVenues(ctx context.Context, filter domain
 	}
 
 	return venues, total, rows.Err()
+}
+
+func buildSearchVenuesQueries(filter domain.VenueListFilter, normalizedQuery string, useTrigram bool) (countSQL string, countArgs []any, listSQL string, listArgs []any) {
+	filterArgs := make([]any, 0, 3)
+	argIdx := 1
+	conditions := []string{"v.is_published = TRUE"}
+
+	if filter.Kota != "" && filter.Kota != "all" {
+		conditions = append(conditions, "v.kota_kode = $"+strconv.Itoa(argIdx))
+		filterArgs = append(filterArgs, filter.Kota)
+		argIdx++
+	}
+
+	if filter.Kategori != "" && filter.Kategori != "all" {
+		conditions = append(conditions, "v.kategori::text = $"+strconv.Itoa(argIdx))
+		filterArgs = append(filterArgs, filter.Kategori)
+		argIdx++
+	}
+
+	queryParamIdx := 0
+	if normalizedQuery != "" {
+		queryParamIdx = argIdx
+		p := "$" + strconv.Itoa(queryParamIdx)
+		if useTrigram {
+			filterArgs = append(filterArgs, normalizedQuery)
+			conditions = append(conditions, "(similarity(v.name, "+p+") > 0.2 OR similarity(v.lokasi, "+p+") > 0.2)")
+		} else {
+			filterArgs = append(filterArgs, "%"+normalizedQuery+"%")
+			conditions = append(conditions, "(v.name ILIKE "+p+" OR v.lokasi ILIKE "+p+" OR v.city ILIKE "+p+")")
+		}
+		argIdx++
+	}
+
+	whereClause := strings.Join(conditions, " AND ")
+	countSQL = "SELECT COUNT(*)::int FROM venues v WHERE " + whereClause
+	countArgs = append([]any(nil), filterArgs...)
+
+	orderBy := "v.rating DESC, v.jumlah_ulasan DESC"
+	if useTrigram && queryParamIdx > 0 {
+		p := "$" + strconv.Itoa(queryParamIdx)
+		orderBy = "GREATEST(similarity(v.name, " + p + "), similarity(v.lokasi, " + p + ")) DESC, v.rating DESC"
+	} else {
+		switch filter.SortBy {
+		case "harga_asc":
+			orderBy = "v.harga_mulai ASC, v.rating DESC"
+		case "harga_desc":
+			orderBy = "v.harga_mulai DESC, v.rating DESC"
+		case "popularitas":
+			orderBy = "v.jumlah_ulasan DESC, v.rating DESC"
+		}
+	}
+
+	dateIdx := argIdx
+	limitIdx := argIdx + 1
+	offsetIdx := argIdx + 2
+	listArgs = append(append([]any(nil), filterArgs...), filter.Tanggal, filter.Limit, filter.Offset)
+
+	listSQL = `
+		SELECT
+			v.id::text,
+			v.venue_code,
+			v.name,
+			v.kota_kode,
+			v.lokasi,
+			v.kategori::text,
+			v.harga_mulai::bigint,
+			v.rating::float8,
+			v.jumlah_ulasan,
+			v.gambar_url,
+			v.gambar_alt,
+			v.is_published,
+			v.latitude::float8,
+			v.longitude::float8,
+			COALESCE((
+				SELECT SUM(GREATEST(0, t.daily_quota - COALESCE((
+					SELECT SUM(ti.quantity)
+					FROM transaction_items ti
+					JOIN transactions tr ON tr.id = ti.transaction_id
+					WHERE ti.ticket_id = t.id
+					  AND ti.booking_date = $` + strconv.Itoa(dateIdx) + `::date
+					  AND (tr.payment_status = 'PAID' OR (tr.payment_status = 'PENDING' AND tr.expired_at > NOW()))
+				), 0)))
+				FROM tickets t
+				WHERE t.venue_id = v.id AND t.is_active = TRUE
+			), 0)::int AS remaining_quota
+		FROM venues v
+		WHERE ` + whereClause + `
+		ORDER BY ` + orderBy + `
+		LIMIT $` + strconv.Itoa(limitIdx) + ` OFFSET $` + strconv.Itoa(offsetIdx)
+
+	return countSQL, countArgs, listSQL, listArgs
 }
 
 func (r *PgxDiscoveryRepository) FindVenueDetailByID(ctx context.Context, venueID, tanggal string) (domain.VenueDetail, error) {

@@ -101,7 +101,8 @@ func main() {
 	discoveryHandler := handler.NewDiscoveryHandler(discoverySvc)
 
 	bookingRepo := repository.NewPgxBookingRepository(pool)
-	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.MidtransServerKey, cfg.AppEnv)
+	snapClient := service.NewHTTPMidtransSnapClient(cfg.MidtransEnv, cfg.MidtransServerKey)
+	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.MidtransServerKey, cfg.AppEnv, snapClient)
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
 	opsRepo := repository.NewPgxOperationsRepository(pool)
