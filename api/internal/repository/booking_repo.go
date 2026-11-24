@@ -17,6 +17,7 @@ type BookingRepository interface {
 	CreateBookingTx(ctx context.Context, input domain.PendingTransactionCreate, sortedTicketIDs []string, qtyByTicket map[string]int) (domain.TransactionDTO, error)
 	FindCustomerContact(ctx context.Context, customerID string) (domain.CustomerContact, error)
 	UpdateTransactionSnap(ctx context.Context, transactionID, snapToken, snapRedirectURL string) error
+	UpdateTransactionQRString(ctx context.Context, transactionID, qrString string) error
 	FindBookingByID(ctx context.Context, transactionID, customerID string) (domain.TransactionDTO, error)
 	FindBookingIDByInvoice(ctx context.Context, invoiceNumber string) (string, error)
 	SettlePaymentTx(ctx context.Context, transactionID, gatewayRef string, buildRedemption func(itemID, venueID, bookingDate string) (domain.RedemptionCreate, error)) (domain.TransactionDTO, error)
@@ -181,6 +182,18 @@ func (r *PgxBookingRepository) UpdateTransactionSnap(ctx context.Context, transa
 	`, transactionID, snapToken, snapRedirectURL)
 	if err != nil {
 		return fmt.Errorf("update transaction snap: %w", err)
+	}
+	return nil
+}
+
+func (r *PgxBookingRepository) UpdateTransactionQRString(ctx context.Context, transactionID, qrString string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE transactions
+		SET qr_string = $2
+		WHERE id = $1::uuid
+	`, transactionID, qrString)
+	if err != nil {
+		return fmt.Errorf("update transaction qr_string: %w", err)
 	}
 	return nil
 }

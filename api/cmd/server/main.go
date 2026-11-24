@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -46,12 +47,11 @@ func main() {
 	}
 	defer pool.Close()
 
-	applied, err := database.Migrate(rootCtx, pool)
+	_, err = database.Migrate(rootCtx, pool)
 	if err != nil {
 		logger.Error("failed to run migrations", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("database migrations checked", "applied", applied)
 
 	if strings.EqualFold(cfg.AppEnv, "development") {
 		seeded, err := database.SeedDev(rootCtx, pool)
@@ -69,10 +69,11 @@ func main() {
 	}
 
 	app := fiber.New(fiber.Config{
-		AppName:      "Fastix API",
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		AppName:               "Fastix API",
+		DisableStartupMessage: true,
+		ReadTimeout:           10 * time.Second,
+		WriteTimeout:          10 * time.Second,
+		IdleTimeout:           30 * time.Second,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			status := fiber.StatusInternalServerError
 			code := "INTERNAL_ERROR"
@@ -170,7 +171,14 @@ func main() {
 	}()
 
 	addr := ":" + cfg.AppPort
-	logger.Info("starting fastix api", "addr", addr, "env", cfg.AppEnv)
+	midtransStatus := "disconnected"
+	if snapClient.CheckConnection(rootCtx) {
+		midtransStatus = "connected"
+	}
+	fmt.Printf("\nFastix API (%s) listening on %s\n", cfg.AppEnv, addr)
+	fmt.Printf("database : connected\n")
+	fmt.Printf("midtrans : %s\n\n", midtransStatus)
+
 	if err := app.Listen(addr); err != nil {
 		logger.Error("server stopped with error", "error", err)
 		os.Exit(1)
