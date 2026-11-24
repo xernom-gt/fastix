@@ -1,37 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { formatRupiah, formatTanggalID, type PaymentStatus } from '@pariwisloka/shared';
 import { BookingStepper } from '../components/BookingStepper';
 import { QrMatrixSvg } from '../components/QrMatrixSvg';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
-
-interface MidtransSnapCallbacks {
-  onSuccess?: (result: unknown) => void;
-  onPending?: (result: unknown) => void;
-  onError?: (result: unknown) => void;
-  onClose?: () => void;
-}
-
-declare global {
-  interface Window {
-    snap?: {
-      pay: (snapToken: string, callbacks?: MidtransSnapCallbacks) => void;
-    };
-  }
-}
-
-const MIDTRANS_ENV =
-  (import.meta.env.VITE_MIDTRANS_ENV as string | undefined)?.trim() || 'sandbox';
-const MIDTRANS_CLIENT_KEY =
-  (import.meta.env.VITE_MIDTRANS_CLIENT_KEY as string | undefined)?.trim() ||
-  (MIDTRANS_ENV === 'production' ? '' : 'SB-Mid-client-sE4oCCcuGuVAqdxbn7x76s2D');
-const MIDTRANS_SNAP_URL =
-  MIDTRANS_ENV === 'production'
-    ? 'https://app.midtrans.com/snap/snap.js'
-    : 'https://app.sandbox.midtrans.com/snap/snap.js';
-const IS_DEV_OR_SANDBOX =
-  import.meta.env.DEV || MIDTRANS_ENV !== 'production';
 
 const PAYMENT_STATUS_LABEL: Record<PaymentStatus, { text: string; className: string }> = {
   PENDING: {
@@ -64,57 +37,81 @@ export default function CheckoutPage() {
     transactions,
     fetchBooking,
     refreshTickets,
-    simulateWebhookPaid,
-    cancelTransaction,
     expireTransaction,
   } = useBookings();
 
   const tx = transactions.find((t) => t.id === invoiceId || t.invoiceNumber === invoiceId);
-  const [isPaying, setIsPaying] = useState(false);
-  const [payError, setPayError] = useState('');
+  const txId = tx?.id;
+  const paymentStatus = tx?.paymentStatus;
+  const expiredAt = tx?.expiredAt;
+
   const [secondsLeft, setSecondsLeft] = useState<number>(() => {
-    if (!tx) return 0;
-    return Math.max(0, Math.floor((new Date(tx.expiredAt).getTime() - Date.now()) / 1000));
+    if (!expiredAt) return 0;
+    return Math.max(0, Math.floor((new Date(expiredAt).getTime() - Date.now()) / 1000));
   });
 
-  useEffect(() => {
-    if (!MIDTRANS_CLIENT_KEY && !tx?.snapToken) return;
-    const scriptId = 'fastix-midtrans-snap';
-    const existing = document.getElementById(scriptId) as HTMLScriptElement | null;
-    if (existing) {
-      if (MIDTRANS_CLIENT_KEY && !existing.getAttribute('data-client-key')) {
-        existing.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
-      }
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.id = scriptId;
-    script.src = MIDTRANS_SNAP_URL;
-    if (MIDTRANS_CLIENT_KEY) {
-      script.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
-    }
-    script.async = true;
-    document.body.appendChild(script);
-  }, [tx?.snapToken]);
+  const fetchBookingRef = useRef(fetchBooking);
+  fetchBookingRef.current = fetchBooking;
+  const refreshTicketsRef = useRef(refreshTickets);
+  refreshTicketsRef.current = refreshTickets;
+  const expireTransactionRef = useRef(expireTransaction);
+  expireTransactionRef.current = expireTransaction;
 
   useEffect(() => {
     if (!invoiceId || !isAuthenticated) return;
-    void fetchBooking(invoiceId);
-  }, [invoiceId, isAuthenticated, fetchBooking]);
+    void fetchBookingRef.current(invoiceId);
+  }, [invoiceId, isAuthenticated]);
 
   useEffect(() => {
-    if (!tx || tx.paymentStatus !== 'PENDING') return;
+    if (!txId || paymentStatus !== 'PENDING' || !expiredAt) return;
+
+    const computeRemaining = () =>
+      Math.max(0, Math.floor((new Date(expiredAt).getTime() - Date.now()) / 1000));
+
+    const initial = computeRemaining();
+    setSecondsLeft(initial);
+    if (initial === 0) {
+      expireTransactionRef.current(txId);
+      return;
+    }
+
     const timer = window.setInterval(() => {
-      const rem = Math.max(0, Math.floor((new Date(tx.expiredAt).getTime() - Date.now()) / 1000));
+      const rem = computeRemaining();
       setSecondsLeft(rem);
       if (rem === 0) {
-        expireTransaction(tx.id);
+        expireTransactionRef.current(txId);
         window.clearInterval(timer);
       }
     }, 1000);
+
     return () => window.clearInterval(timer);
-  }, [tx, expireTransaction]);
+  }, [txId, paymentStatus, expiredAt]);
+
+  useEffect(() => {
+    if (!invoiceId || !isAuthenticated || paymentStatus !== 'PENDING') return;
+    const poller = window.setInterval(() => {
+      void fetchBookingRef.current(invoiceId);
+    }, 3000);
+    return () => window.clearInterval(poller);
+  }, [invoiceId, isAuthenticated, paymentStatus]);
+
+  useEffect(() => {
+    if (paymentStatus !== 'PAID') return;
+    let active = true;
+    void refreshTicketsRef
+      .current()
+      .catch(() => {
+        // ignore ticket refresh error before redirect
+      })
+      .finally(() => {
+        if (active) {
+          navigate('/tiket', { replace: true });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [paymentStatus, navigate]);
 
   if (!isAuthenticated || !user) {
     return <Navigate to={`/login?redirect=${encodeURIComponent(`/checkout/${invoiceId ?? ''}`)}`} replace />;
@@ -137,86 +134,6 @@ export default function CheckoutPage() {
 
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const ss = String(secondsLeft % 60).padStart(2, '0');
-  const isRealSnapToken = Boolean(tx.snapToken && !tx.snapToken.startsWith('sandbox-snap-'));
-
-  const syncStatusAfterSnap = async () => {
-    setIsPaying(true);
-    try {
-      const updated = await fetchBooking(tx.id);
-      if (updated?.paymentStatus === 'PAID') {
-        await refreshTickets();
-        navigate('/tiket');
-      }
-    } finally {
-      setIsPaying(false);
-    }
-  };
-
-  const handleOpenMidtransTab = () => {
-    if (!tx.snapRedirectUrl) return;
-    setPayError('');
-    window.open(tx.snapRedirectUrl, '_blank', 'noopener,noreferrer');
-    void fetchBooking(tx.id);
-  };
-
-  const handleMidtransPay = () => {
-    if (!isRealSnapToken) {
-      if (tx.snapRedirectUrl) {
-        handleOpenMidtransTab();
-      } else {
-        setPayError('Token pembayaran Midtrans tidak valid untuk mode popup.');
-      }
-      return;
-    }
-
-    if (!tx.snapToken) return;
-    setPayError('');
-
-    if (window.snap?.pay) {
-      window.snap.pay(tx.snapToken, {
-        onSuccess: () => {
-          void syncStatusAfterSnap();
-        },
-        onPending: () => {
-          void syncStatusAfterSnap();
-        },
-        onError: () => {
-          setPayError('Pembayaran gagal atau ditolak. Silakan coba lagi.');
-          void fetchBooking(tx.id);
-        },
-        onClose: () => {
-          void syncStatusAfterSnap();
-        },
-      });
-      return;
-    }
-
-    if (tx.snapRedirectUrl) {
-      handleOpenMidtransTab();
-      return;
-    }
-
-    setPayError('Popup pembayaran Midtrans sedang dimuat. Silakan coba beberapa saat lagi.');
-  };
-
-  const handleSimulatePaid = async () => {
-    setPayError('');
-    setIsPaying(true);
-    try {
-      const issued = await simulateWebhookPaid(tx.id, user.fullName);
-      if (issued.length > 0) {
-        navigate(`/tiket/${issued[0].ticketCode}`);
-      } else {
-        navigate('/tiket');
-      }
-    } catch (err: unknown) {
-      setPayError(
-        err instanceof Error ? err.message : 'Gagal memproses pembayaran. Silakan coba lagi.',
-      );
-    } finally {
-      setIsPaying(false);
-    }
-  };
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
@@ -253,9 +170,6 @@ export default function CheckoutPage() {
               <p className="text-xs text-gray-600">
                 Pindai kode QRIS di atas melalui aplikasi bank atau dompet digital Anda untuk
                 menyelesaikan pembayaran.
-              </p>
-              <p className="text-xs font-medium text-gray-600">
-                Mendukung pembayaran langsung via Midtrans Snap &amp; Simulator QRIS Sandbox
               </p>
             </>
           ) : (
@@ -317,64 +231,24 @@ export default function CheckoutPage() {
           </div>
 
           {tx.paymentStatus === 'PENDING' && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-3">
-              <p className="text-xs font-bold text-gray-700">
-                Konfirmasi Pembayaran
-              </p>
-              {payError && (
-                <p role="alert" className="text-xs font-semibold text-red-800 bg-red-50 border border-red-200 px-3 py-2 rounded-xl">
-                  {payError}
-                </p>
-              )}
-              <div className="space-y-2.5">
-                {isRealSnapToken ? (
-                  <button
-                    type="button"
-                    disabled={isPaying}
-                    onClick={handleMidtransPay}
-                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-gray-900 hover:bg-black disabled:opacity-60 text-white text-sm font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    {isPaying ? 'Memeriksa Status...' : 'Bayar dengan Midtrans (Popup Snap)'}
-                  </button>
-                ) : null}
-
-                {tx.snapRedirectUrl ? (
-                  <button
-                    type="button"
-                    disabled={isPaying}
-                    onClick={handleOpenMidtransTab}
-                    className={`w-full min-h-[44px] px-4 rounded-xl transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 font-bold ${
-                      isRealSnapToken
-                        ? 'py-2.5 border border-gray-900 hover:bg-gray-50 text-gray-900 text-xs'
-                        : 'py-3 bg-gray-900 hover:bg-black text-white text-sm'
-                    }`}
-                  >
-                    Buka Halaman Pembayaran Midtrans (Tab Baru / Simulator)
-                  </button>
-                ) : null}
-
-                {IS_DEV_OR_SANDBOX || !isRealSnapToken ? (
-                  <button
-                    type="button"
-                    disabled={isPaying}
-                    onClick={handleSimulatePaid}
-                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-emerald-800 hover:bg-emerald-900 disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    {isPaying
-                      ? 'Memproses Konfirmasi...'
-                      : 'Konfirmasi Pembayaran Selesai (Simulasi Lunas)'}
-                  </button>
-                ) : null}
-
-                <button
-                  type="button"
-                  disabled={isPaying}
-                  onClick={() => cancelTransaction(tx.id)}
-                  className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-700 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
-                >
-                  Batalkan Pesanan
-                </button>
+            <div
+              role="status"
+              aria-live="polite"
+              className="bg-white border border-gray-200 rounded-2xl p-5 space-y-2"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-600" />
+                </span>
+                <h2 className="text-sm font-bold text-gray-900">
+                  Menunggu Pembayaran Otomatis
+                </h2>
               </div>
+              <p className="text-xs leading-relaxed text-gray-600">
+                Sistem memeriksa status pembayaran Anda setiap beberapa detik. Halaman ini akan
+                otomatis berpindah ke E-Ticket setelah QRIS berhasil dibayar.
+              </p>
             </div>
           )}
         </div>
