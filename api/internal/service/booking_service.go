@@ -209,22 +209,23 @@ func (c *HTTPMidtransSnapClient) CheckOrderStatus(ctx context.Context, orderID s
 	return statusResp, nil
 }
 
-// CheckConnection verifies whether the Midtrans Snap endpoint is reachable and accepts the configured server key.
+// CheckConnection verifies whether the Midtrans Core API is reachable and accepts the configured server key
+// using a lightweight GET status ping on a non-existent order ID (avoiding Snap validation emails).
 func (c *HTTPMidtransSnapClient) CheckConnection(ctx context.Context) bool {
-	if c == nil || c.client == nil || strings.TrimSpace(c.serverKey) == "" || strings.TrimSpace(c.endpoint) == "" {
+	if c == nil || c.client == nil || strings.TrimSpace(c.serverKey) == "" || strings.TrimSpace(c.coreBaseURL) == "" {
 		return false
 	}
 
 	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(checkCtx, http.MethodPost, c.endpoint, strings.NewReader("{}"))
+	pingURL := strings.TrimRight(c.coreBaseURL, "/") + "/v2/fastix-healthcheck-ping/status"
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, pingURL, nil)
 	if err != nil {
 		return false
 	}
 	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
 	req.Header.Set("Authorization", "Basic "+authToken)
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -321,23 +322,10 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 			return domain.TransactionDTO{}, contactErr
 		}
 		midtransOrderID := toMidtransOrderID(tx.InvoiceNumber)
-		var snapToken, snapRedirectURL string
-		snapResp, snapErr := s.snapClient.CreateTransaction(ctx, midtransOrderID, tx.TotalAmount, contact)
-		if snapErr != nil {
-			fmt.Printf("[MIDTRANS_NOTICE] Snap API returned error (%v). Using Midtrans Sandbox simulator fallback.\n", snapErr)
-			snapToken = fmt.Sprintf("sandbox-snap-%s", tx.InvoiceNumber)
-			snapRedirectURL = fmt.Sprintf("https://simulator.sandbox.midtrans.com/qris/index?order_id=%s&amount=%d", midtransOrderID, tx.TotalAmount)
-		} else {
-			snapToken = snapResp.Token
-			snapRedirectURL = snapResp.RedirectURL
-		}
-		if updateErr := s.repo.UpdateTransactionSnap(ctx, tx.ID, snapToken, snapRedirectURL); updateErr != nil {
-			return domain.TransactionDTO{}, updateErr
-		}
-		tx.SnapToken = snapToken
-		tx.SnapRedirectURL = snapRedirectURL
+		snapRedirectURL := fmt.Sprintf("https://simulator.sandbox.midtrans.com/qris/index?order_id=%s&amount=%d", midtransOrderID, tx.TotalAmount)
 
-		if qrString, qrisErr := s.snapClient.ChargeQRIS(ctx, midtransOrderID, tx.TotalAmount, contact); qrisErr != nil {
+		qrString, qrisErr := s.snapClient.ChargeQRIS(ctx, tx.InvoiceNumber, tx.TotalAmount, contact)
+		if qrisErr != nil {
 			fmt.Printf("[MIDTRANS_NOTICE] Core API QRIS charge returned error (%v). Keeping default qr_string.\n", qrisErr)
 		} else if strings.TrimSpace(qrString) != "" {
 			if updateQRErr := s.repo.UpdateTransactionQRString(ctx, tx.ID, qrString); updateQRErr != nil {
@@ -345,6 +333,12 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 			}
 			tx.QRString = qrString
 		}
+
+		if updateErr := s.repo.UpdateTransactionSnap(ctx, tx.ID, "", snapRedirectURL); updateErr != nil {
+			return domain.TransactionDTO{}, updateErr
+		}
+		tx.SnapToken = ""
+		tx.SnapRedirectURL = snapRedirectURL
 	}
 
 	return tx, nil

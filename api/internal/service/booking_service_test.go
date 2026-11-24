@@ -220,72 +220,16 @@ func TestMidtransWebhookSignatureVerification(t *testing.T) {
 	}
 }
 
-func TestCreateBookingWithMidtransSnap(t *testing.T) {
-	const serverKey = "SB-Mid-server-snap-test"
-	var gotAuth string
-	var gotOrderID string
-	var gotGross int64
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		var payload struct {
-			TransactionDetails struct {
-				OrderID     string `json:"order_id"`
-				GrossAmount int64  `json:"gross_amount"`
-			} `json:"transaction_details"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode snap body: %v", err)
-		}
-		gotOrderID = payload.TransactionDetails.OrderID
-		gotGross = payload.TransactionDetails.GrossAmount
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"token":"snap-tok-123","redirect_url":"https://app.sandbox.midtrans.com/snap/v2/vtweb/snap-tok-123"}`))
-	}))
-	defer srv.Close()
-
-	snapClient := &HTTPMidtransSnapClient{
-		endpoint:  srv.URL,
-		serverKey: serverKey,
-		client:    srv.Client(),
-	}
-	repo := &stubBookingRepo{}
-	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "development", snapClient)
-
-	futureDate := time.Now().In(wibZone).AddDate(0, 0, 2).Format("2006-01-02")
-	tx, err := svc.CreateBooking(context.Background(), "usr-1", domain.CreateBookingRequest{
-		VenueID:     "11111111-1111-1111-1111-111111111111",
-		BookingDate: futureDate,
-		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 2}},
-	})
-	if err != nil {
-		t.Fatalf("CreateBooking with Snap: %v", err)
-	}
-
-	expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(serverKey+":"))
-	if gotAuth != expectedAuth {
-		t.Fatalf("expected Basic auth %q, got %q", expectedAuth, gotAuth)
-	}
-	wantOrderID := toMidtransOrderID(tx.InvoiceNumber)
-	if strings.Contains(gotOrderID, "/") || gotOrderID != wantOrderID || gotGross != 105000 {
-		t.Fatalf("unexpected Snap payload order=%s want=%s gross=%d", gotOrderID, wantOrderID, gotGross)
-	}
-	if tx.SnapToken != "snap-tok-123" || repo.snapToken != "snap-tok-123" {
-		t.Fatalf("expected snapToken persisted and returned, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
-	}
-}
-
-func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
+func TestCreateBookingWithMidtransCoreQRISFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
 	snapClient := &HTTPMidtransSnapClient{
-		endpoint:  srv.URL,
-		serverKey: "SB-Mid-server-invalid",
-		client:    srv.Client(),
+		coreBaseURL: srv.URL,
+		serverKey:   "SB-Mid-server-invalid",
+		client:      srv.Client(),
 	}
 	repo := &stubBookingRepo{}
 	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", "SB-Mid-server-invalid", "development", snapClient)
@@ -297,13 +241,16 @@ func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
 		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 1}},
 	})
 	if err != nil {
-		t.Fatalf("expected fallback on Snap API error, got %v", err)
+		t.Fatalf("expected fallback on Core QRIS API error, got %v", err)
 	}
 
-	wantToken := "sandbox-snap-" + tx.InvoiceNumber
+	wantQR := "FASTIX-QRIS-" + tx.InvoiceNumber
 	wantURL := "https://simulator.sandbox.midtrans.com/qris/index?order_id=" + toMidtransOrderID(tx.InvoiceNumber) + "&amount=105000"
-	if tx.SnapToken != wantToken || repo.snapToken != wantToken {
-		t.Fatalf("expected fallback snapToken %q, got tx=%q repo=%q", wantToken, tx.SnapToken, repo.snapToken)
+	if tx.QRString != wantQR {
+		t.Fatalf("expected fallback qrString %q, got %q", wantQR, tx.QRString)
+	}
+	if tx.SnapToken != "" || repo.snapToken != "" {
+		t.Fatalf("expected empty snapToken, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
 	}
 	if tx.SnapRedirectURL != wantURL || repo.snapURL != wantURL {
 		t.Fatalf("expected fallback snapRedirectURL %q, got tx=%q repo=%q", wantURL, tx.SnapRedirectURL, repo.snapURL)
@@ -313,9 +260,9 @@ func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
 func TestMidtransCheckConnection(t *testing.T) {
 	t.Run("empty server key returns false", func(t *testing.T) {
 		client := &HTTPMidtransSnapClient{
-			endpoint:  "https://example.invalid/snap/v1/transactions",
-			serverKey: "   ",
-			client:    http.DefaultClient,
+			coreBaseURL: "https://example.invalid",
+			serverKey:   "   ",
+			client:      http.DefaultClient,
 		}
 		if client.CheckConnection(context.Background()) {
 			t.Fatal("expected CheckConnection to return false for empty server key")
@@ -328,7 +275,8 @@ func TestMidtransCheckConnection(t *testing.T) {
 		want       bool
 	}{
 		{name: "401 unauthorized returns false", statusCode: http.StatusUnauthorized, want: false},
-		{name: "400 bad request returns true", statusCode: http.StatusBadRequest, want: true},
+		{name: "403 forbidden returns false", statusCode: http.StatusForbidden, want: false},
+		{name: "404 not found returns true", statusCode: http.StatusNotFound, want: true},
 		{name: "200 ok returns true", statusCode: http.StatusOK, want: true},
 	}
 
@@ -336,36 +284,41 @@ func TestMidtransCheckConnection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			const serverKey = "SB-Mid-server-check-test"
 			var gotMethod string
+			var gotPath string
 			var gotAuth string
-			var gotContentType string
+			var gotAccept string
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotMethod = r.Method
+				gotPath = r.URL.Path
 				gotAuth = r.Header.Get("Authorization")
-				gotContentType = r.Header.Get("Content-Type")
+				gotAccept = r.Header.Get("Accept")
 				w.WriteHeader(tc.statusCode)
 			}))
 			defer srv.Close()
 
 			client := &HTTPMidtransSnapClient{
-				endpoint:  srv.URL,
-				serverKey: serverKey,
-				client:    srv.Client(),
+				coreBaseURL: srv.URL,
+				serverKey:   serverKey,
+				client:      srv.Client(),
 			}
 
 			got := client.CheckConnection(context.Background())
 			if got != tc.want {
 				t.Fatalf("CheckConnection() = %v, want %v", got, tc.want)
 			}
-			if gotMethod != http.MethodPost {
-				t.Fatalf("expected POST request, got %s", gotMethod)
+			if gotMethod != http.MethodGet {
+				t.Fatalf("expected GET request, got %s", gotMethod)
+			}
+			if gotPath != "/v2/fastix-healthcheck-ping/status" {
+				t.Fatalf("expected path /v2/fastix-healthcheck-ping/status, got %q", gotPath)
 			}
 			expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(serverKey+":"))
 			if gotAuth != expectedAuth {
 				t.Fatalf("expected Authorization %q, got %q", expectedAuth, gotAuth)
 			}
-			if gotContentType != "application/json" {
-				t.Fatalf("expected Content-Type application/json, got %q", gotContentType)
+			if gotAccept != "application/json" {
+				t.Fatalf("expected Accept application/json, got %q", gotAccept)
 			}
 		})
 	}
@@ -378,10 +331,11 @@ func TestCreateBookingWithMidtransCoreQRIS(t *testing.T) {
 	var gotPaymentType string
 	var gotOrderID string
 	var gotGross int64
+	var snapCalled bool
 
 	snapSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"token":"snap-tok-qris","redirect_url":"https://app.sandbox.midtrans.com/snap/v2/vtweb/snap-tok-qris"}`))
+		snapCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer snapSrv.Close()
 
@@ -427,12 +381,22 @@ func TestCreateBookingWithMidtransCoreQRIS(t *testing.T) {
 		t.Fatalf("CreateBooking with Core QRIS: %v", err)
 	}
 
+	if snapCalled {
+		t.Fatal("expected Snap endpoint not to be called during CreateBooking")
+	}
 	wantOrderID := toMidtransOrderID(tx.InvoiceNumber)
 	if gotPaymentType != "qris" || strings.Contains(gotOrderID, "/") || gotOrderID != wantOrderID || gotGross != 105000 {
 		t.Fatalf("unexpected Core QRIS payload: type=%s order=%s want=%s gross=%d", gotPaymentType, gotOrderID, wantOrderID, gotGross)
 	}
 	if tx.QRString != expectedQRString || repo.qrString != expectedQRString {
 		t.Fatalf("expected qrString %q persisted and returned, got tx=%q repo=%q", expectedQRString, tx.QRString, repo.qrString)
+	}
+	wantURL := "https://simulator.sandbox.midtrans.com/qris/index?order_id=" + wantOrderID + "&amount=105000"
+	if tx.SnapToken != "" || repo.snapToken != "" {
+		t.Fatalf("expected empty snapToken, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
+	}
+	if tx.SnapRedirectURL != wantURL || repo.snapURL != wantURL {
+		t.Fatalf("expected snapRedirectURL %q, got tx=%q repo=%q", wantURL, tx.SnapRedirectURL, repo.snapURL)
 	}
 }
 
