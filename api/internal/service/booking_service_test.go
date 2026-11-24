@@ -284,3 +284,64 @@ func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
 		t.Fatalf("expected fallback snapRedirectURL %q, got tx=%q repo=%q", wantURL, tx.SnapRedirectURL, repo.snapURL)
 	}
 }
+
+func TestMidtransCheckConnection(t *testing.T) {
+	t.Run("empty server key returns false", func(t *testing.T) {
+		client := &HTTPMidtransSnapClient{
+			endpoint:  "https://example.invalid/snap/v1/transactions",
+			serverKey: "   ",
+			client:    http.DefaultClient,
+		}
+		if client.CheckConnection(context.Background()) {
+			t.Fatal("expected CheckConnection to return false for empty server key")
+		}
+	})
+
+	cases := []struct {
+		name       string
+		statusCode int
+		want       bool
+	}{
+		{name: "401 unauthorized returns false", statusCode: http.StatusUnauthorized, want: false},
+		{name: "400 bad request returns true", statusCode: http.StatusBadRequest, want: true},
+		{name: "200 ok returns true", statusCode: http.StatusOK, want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const serverKey = "SB-Mid-server-check-test"
+			var gotMethod string
+			var gotAuth string
+			var gotContentType string
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				gotAuth = r.Header.Get("Authorization")
+				gotContentType = r.Header.Get("Content-Type")
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer srv.Close()
+
+			client := &HTTPMidtransSnapClient{
+				endpoint:  srv.URL,
+				serverKey: serverKey,
+				client:    srv.Client(),
+			}
+
+			got := client.CheckConnection(context.Background())
+			if got != tc.want {
+				t.Fatalf("CheckConnection() = %v, want %v", got, tc.want)
+			}
+			if gotMethod != http.MethodPost {
+				t.Fatalf("expected POST request, got %s", gotMethod)
+			}
+			expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(serverKey+":"))
+			if gotAuth != expectedAuth {
+				t.Fatalf("expected Authorization %q, got %q", expectedAuth, gotAuth)
+			}
+			if gotContentType != "application/json" {
+				t.Fatalf("expected Content-Type application/json, got %q", gotContentType)
+			}
+		})
+	}
+}

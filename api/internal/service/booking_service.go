@@ -100,6 +100,36 @@ func (c *HTTPMidtransSnapClient) CreateTransaction(ctx context.Context, orderID 
 	return snapResp, nil
 }
 
+// CheckConnection verifies whether the Midtrans Snap endpoint is reachable and accepts the configured server key.
+func (c *HTTPMidtransSnapClient) CheckConnection(ctx context.Context) bool {
+	if c == nil || c.client == nil || strings.TrimSpace(c.serverKey) == "" || strings.TrimSpace(c.endpoint) == "" {
+		return false
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodPost, c.endpoint, strings.NewReader("{}"))
+	if err != nil {
+		return false
+	}
+	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
+	req.Header.Set("Authorization", "Basic "+authToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false
+	}
+	return true
+}
+
 // BookingService handles atomic bookings, QRIS settlement, e-tickets, and scheduled workers.
 type BookingService struct {
 	repo              repository.BookingRepository
