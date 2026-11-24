@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -26,28 +27,42 @@ const (
 	autoRefundAfterDays = 7
 )
 
-// SnapClient creates Midtrans Snap checkout tokens.
+// MidtransOrderStatus holds status fields from Midtrans Core API /v2/{order_id}/status.
+type MidtransOrderStatus struct {
+	OrderID           string `json:"order_id"`
+	TransactionID     string `json:"transaction_id"`
+	TransactionStatus string `json:"transaction_status"`
+	StatusCode        string `json:"status_code"`
+}
+
+// SnapClient creates Midtrans Snap checkout tokens and Core API QRIS charges/status checks.
 type SnapClient interface {
 	CreateTransaction(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (domain.SnapCreateResponse, error)
+	ChargeQRIS(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (string, error)
+	CheckOrderStatus(ctx context.Context, orderID string) (MidtransOrderStatus, error)
 }
 
-// HTTPMidtransSnapClient calls Midtrans Snap API over HTTPS.
+// HTTPMidtransSnapClient calls Midtrans Snap and Core APIs over HTTPS.
 type HTTPMidtransSnapClient struct {
-	endpoint  string
-	serverKey string
-	client    *http.Client
+	endpoint    string
+	coreBaseURL string
+	serverKey   string
+	client      *http.Client
 }
 
-// NewHTTPMidtransSnapClient configures a Snap client for sandbox or production.
+// NewHTTPMidtransSnapClient configures a Midtrans client for sandbox or production.
 func NewHTTPMidtransSnapClient(midtransEnv, serverKey string) *HTTPMidtransSnapClient {
 	endpoint := "https://app.sandbox.midtrans.com/snap/v1/transactions"
+	coreBaseURL := "https://api.sandbox.midtrans.com"
 	if strings.EqualFold(midtransEnv, "production") {
 		endpoint = "https://app.midtrans.com/snap/v1/transactions"
+		coreBaseURL = "https://api.midtrans.com"
 	}
 	return &HTTPMidtransSnapClient{
-		endpoint:  endpoint,
-		serverKey: serverKey,
-		client:    &http.Client{Timeout: 8 * time.Second},
+		endpoint:    endpoint,
+		coreBaseURL: coreBaseURL,
+		serverKey:   serverKey,
+		client:      &http.Client{Timeout: 8 * time.Second},
 	}
 }
 
@@ -98,6 +113,100 @@ func (c *HTTPMidtransSnapClient) CreateTransaction(ctx context.Context, orderID 
 		return domain.SnapCreateResponse{}, fmt.Errorf("decode snap response: %w", err)
 	}
 	return snapResp, nil
+}
+
+// ChargeQRIS creates a direct QRIS charge via Midtrans Core API and returns the qr_string payload.
+func (c *HTTPMidtransSnapClient) ChargeQRIS(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (string, error) {
+	if c == nil || c.client == nil || strings.TrimSpace(c.coreBaseURL) == "" || strings.TrimSpace(c.serverKey) == "" {
+		return "", fmt.Errorf("midtrans core api client not configured")
+	}
+
+	body := map[string]any{
+		"payment_type": "qris",
+		"transaction_details": map[string]any{
+			"order_id":     orderID,
+			"gross_amount": grossAmount,
+		},
+		"customer_details": map[string]any{
+			"first_name": customer.FullName,
+			"email":      customer.Email,
+			"phone":      customer.PhoneNumber,
+		},
+	}
+
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal core qris request: %w", err)
+	}
+
+	chargeURL := strings.TrimRight(c.coreBaseURL, "/") + "/v2/charge"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chargeURL, bytes.NewReader(rawBody))
+	if err != nil {
+		return "", fmt.Errorf("build core qris request: %w", err)
+	}
+	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
+	req.Header.Set("Authorization", "Basic "+authToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request midtrans core qris: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("midtrans core qris returned status %d", resp.StatusCode)
+	}
+
+	var chargeResp struct {
+		StatusCode    string `json:"status_code"`
+		StatusMessage string `json:"status_message"`
+		QRString      string `json:"qr_string"`
+		Actions       []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"actions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&chargeResp); err != nil {
+		return "", fmt.Errorf("decode core qris response: %w", err)
+	}
+	if strings.TrimSpace(chargeResp.QRString) == "" {
+		return "", fmt.Errorf("midtrans core qris returned empty qr_string (status_code=%s)", chargeResp.StatusCode)
+	}
+	return chargeResp.QRString, nil
+}
+
+// CheckOrderStatus queries Midtrans Core API for the current transaction status of orderID.
+func (c *HTTPMidtransSnapClient) CheckOrderStatus(ctx context.Context, orderID string) (MidtransOrderStatus, error) {
+	if c == nil || c.client == nil || strings.TrimSpace(c.coreBaseURL) == "" || strings.TrimSpace(c.serverKey) == "" {
+		return MidtransOrderStatus{}, fmt.Errorf("midtrans core api client not configured")
+	}
+
+	statusURL := fmt.Sprintf("%s/v2/%s/status", strings.TrimRight(c.coreBaseURL, "/"), url.PathEscape(orderID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+	if err != nil {
+		return MidtransOrderStatus{}, fmt.Errorf("build core status request: %w", err)
+	}
+	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
+	req.Header.Set("Authorization", "Basic "+authToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return MidtransOrderStatus{}, fmt.Errorf("request midtrans core status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return MidtransOrderStatus{}, fmt.Errorf("midtrans core status returned status %d", resp.StatusCode)
+	}
+
+	var statusResp MidtransOrderStatus
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return MidtransOrderStatus{}, fmt.Errorf("decode core status response: %w", err)
+	}
+	return statusResp, nil
 }
 
 // CheckConnection verifies whether the Midtrans Snap endpoint is reachable and accepts the configured server key.
@@ -226,6 +335,15 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 		}
 		tx.SnapToken = snapToken
 		tx.SnapRedirectURL = snapRedirectURL
+
+		if qrString, qrisErr := s.snapClient.ChargeQRIS(ctx, tx.InvoiceNumber, tx.TotalAmount, contact); qrisErr != nil {
+			fmt.Printf("[MIDTRANS_NOTICE] Core API QRIS charge returned error (%v). Keeping default qr_string.\n", qrisErr)
+		} else if strings.TrimSpace(qrString) != "" {
+			if updateQRErr := s.repo.UpdateTransactionQRString(ctx, tx.ID, qrString); updateQRErr != nil {
+				return domain.TransactionDTO{}, updateQRErr
+			}
+			tx.QRString = qrString
+		}
 	}
 
 	return tx, nil
@@ -239,6 +357,22 @@ func (s *BookingService) GetBooking(ctx context.Context, invoiceID, customerID s
 	if err != nil {
 		return domain.TransactionDTO{}, err
 	}
+
+	if tx.PaymentStatus == domain.PaymentStatusPending && s.snapClient != nil {
+		statusResp, statusErr := s.snapClient.CheckOrderStatus(ctx, tx.InvoiceNumber)
+		if statusErr == nil && isMidtransSettled(statusResp.TransactionStatus) {
+			gatewayRef := strings.TrimSpace(statusResp.TransactionID)
+			if gatewayRef == "" {
+				gatewayRef = "MIDTRANS-" + tx.InvoiceNumber
+			}
+			settledTx, settleErr := s.settleTransaction(ctx, tx.ID, gatewayRef)
+			if settleErr != nil {
+				return domain.TransactionDTO{}, settleErr
+			}
+			return settledTx, nil
+		}
+	}
+
 	return tx, nil
 }
 

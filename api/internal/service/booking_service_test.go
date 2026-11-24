@@ -18,10 +18,13 @@ import (
 )
 
 type stubBookingRepo struct {
-	createdInput domain.PendingTransactionCreate
-	cutoffSeen   string
-	snapToken    string
-	snapURL      string
+	createdInput      domain.PendingTransactionCreate
+	cutoffSeen        string
+	snapToken         string
+	snapURL           string
+	qrString          string
+	invoiceNumber     string
+	settledGatewayRef string
 }
 
 func (r *stubBookingRepo) CreateBookingTx(_ context.Context, input domain.PendingTransactionCreate, _ []string, _ map[string]int) (domain.TransactionDTO, error) {
@@ -31,6 +34,7 @@ func (r *stubBookingRepo) CreateBookingTx(_ context.Context, input domain.Pendin
 		InvoiceNumber: input.InvoiceNumber,
 		TotalAmount:   105000,
 		PaymentStatus: domain.PaymentStatusPending,
+		QRString:      input.QRString,
 	}, nil
 }
 
@@ -48,16 +52,30 @@ func (r *stubBookingRepo) UpdateTransactionSnap(_ context.Context, _, snapToken,
 	return nil
 }
 
+func (r *stubBookingRepo) UpdateTransactionQRString(_ context.Context, _, qrString string) error {
+	r.qrString = qrString
+	return nil
+}
+
 func (r *stubBookingRepo) FindBookingByID(_ context.Context, transactionID, _ string) (domain.TransactionDTO, error) {
-	return domain.TransactionDTO{ID: transactionID, PaymentStatus: domain.PaymentStatusPending}, nil
+	return domain.TransactionDTO{
+		ID:            transactionID,
+		InvoiceNumber: r.invoiceNumber,
+		PaymentStatus: domain.PaymentStatusPending,
+	}, nil
 }
 
 func (r *stubBookingRepo) FindBookingIDByInvoice(_ context.Context, _ string) (string, error) {
 	return "tx-1", nil
 }
 
-func (r *stubBookingRepo) SettlePaymentTx(_ context.Context, transactionID, _ string, _ func(string, string, string) (domain.RedemptionCreate, error)) (domain.TransactionDTO, error) {
-	return domain.TransactionDTO{ID: transactionID, PaymentStatus: domain.PaymentStatusPaid}, nil
+func (r *stubBookingRepo) SettlePaymentTx(_ context.Context, transactionID, gatewayRef string, _ func(string, string, string) (domain.RedemptionCreate, error)) (domain.TransactionDTO, error) {
+	r.settledGatewayRef = gatewayRef
+	return domain.TransactionDTO{
+		ID:            transactionID,
+		InvoiceNumber: r.invoiceNumber,
+		PaymentStatus: domain.PaymentStatusPaid,
+	}, nil
 }
 
 func (r *stubBookingRepo) ListTicketsByCustomer(_ context.Context, _ string) ([]domain.ETicketDTO, error) {
@@ -343,5 +361,135 @@ func TestMidtransCheckConnection(t *testing.T) {
 				t.Fatalf("expected Content-Type application/json, got %q", gotContentType)
 			}
 		})
+	}
+}
+
+func TestCreateBookingWithMidtransCoreQRIS(t *testing.T) {
+	const serverKey = "SB-Mid-server-core-qris-test"
+	const expectedQRString = "00020101021226620014ID.CO.QRIS.WWW01189360091431234567890215ID10200123456780303UME51440014ID.CO.QRIS.WWW0215ID10200123456780303UME52045999530336054061050005802ID5911FASTIX TEST6007JAKARTA6105123456304ABCD"
+
+	var gotPaymentType string
+	var gotOrderID string
+	var gotGross int64
+
+	snapSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"snap-tok-qris","redirect_url":"https://app.sandbox.midtrans.com/snap/v2/vtweb/snap-tok-qris"}`))
+	}))
+	defer snapSrv.Close()
+
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/charge" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected Core API request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			PaymentType        string `json:"payment_type"`
+			TransactionDetails struct {
+				OrderID     string `json:"order_id"`
+				GrossAmount int64  `json:"gross_amount"`
+			} `json:"transaction_details"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode core charge body: %v", err)
+		}
+		gotPaymentType = payload.PaymentType
+		gotOrderID = payload.TransactionDetails.OrderID
+		gotGross = payload.TransactionDetails.GrossAmount
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":"201","transaction_status":"pending","qr_string":"` + expectedQRString + `"}`))
+	}))
+	defer coreSrv.Close()
+
+	snapClient := &HTTPMidtransSnapClient{
+		endpoint:    snapSrv.URL,
+		coreBaseURL: coreSrv.URL,
+		serverKey:   serverKey,
+		client:      coreSrv.Client(),
+	}
+	repo := &stubBookingRepo{}
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "development", snapClient)
+
+	futureDate := time.Now().In(wibZone).AddDate(0, 0, 2).Format("2006-01-02")
+	tx, err := svc.CreateBooking(context.Background(), "usr-1", domain.CreateBookingRequest{
+		VenueID:     "11111111-1111-1111-1111-111111111111",
+		BookingDate: futureDate,
+		Items:       []domain.BookingItemInput{{TicketID: "22222222-2222-2222-2222-222222222222", Quantity: 2}},
+	})
+	if err != nil {
+		t.Fatalf("CreateBooking with Core QRIS: %v", err)
+	}
+
+	if gotPaymentType != "qris" || gotOrderID != tx.InvoiceNumber || gotGross != 105000 {
+		t.Fatalf("unexpected Core QRIS payload: type=%s order=%s gross=%d", gotPaymentType, gotOrderID, gotGross)
+	}
+	if tx.QRString != expectedQRString || repo.qrString != expectedQRString {
+		t.Fatalf("expected qrString %q persisted and returned, got tx=%q repo=%q", expectedQRString, tx.QRString, repo.qrString)
+	}
+}
+
+func TestGetBookingAutoSyncsMidtransSettlement(t *testing.T) {
+	const serverKey = "SB-Mid-server-status-test"
+	const invoiceNumber = "PWL/INV/20261124/ABCD"
+	const midtransTxID = "mid-qris-tx-999"
+
+	var gotStatusPath string
+	var gotAuth string
+
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotStatusPath = r.URL.EscapedPath()
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"order_id":"` + invoiceNumber + `","transaction_id":"` + midtransTxID + `","transaction_status":"settlement","status_code":"200"}`))
+	}))
+	defer coreSrv.Close()
+
+	snapClient := &HTTPMidtransSnapClient{
+		coreBaseURL: coreSrv.URL,
+		serverKey:   serverKey,
+		client:      coreSrv.Client(),
+	}
+	repo := &stubBookingRepo{invoiceNumber: invoiceNumber}
+	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "development", snapClient)
+
+	tx, err := svc.GetBooking(context.Background(), "tx-1", "usr-1")
+	if err != nil {
+		t.Fatalf("GetBooking auto-sync: %v", err)
+	}
+
+	expectedPath := "/v2/PWL%2FINV%2F20261124%2FABCD/status"
+	if gotStatusPath != expectedPath {
+		t.Fatalf("expected status path %q, got %q", expectedPath, gotStatusPath)
+	}
+	expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(serverKey+":"))
+	if gotAuth != expectedAuth {
+		t.Fatalf("expected Basic auth %q, got %q", expectedAuth, gotAuth)
+	}
+	if tx.PaymentStatus != domain.PaymentStatusPaid {
+		t.Fatalf("expected PAID after Midtrans settlement sync, got %s", tx.PaymentStatus)
+	}
+	if repo.settledGatewayRef != midtransTxID {
+		t.Fatalf("expected gatewayRef %q, got %q", midtransTxID, repo.settledGatewayRef)
+	}
+
+	// Verify CheckOrderStatus error is ignored and returns PENDING
+	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer errSrv.Close()
+
+	svcErr := NewBookingService(
+		&stubBookingRepo{invoiceNumber: invoiceNumber},
+		"qr-hmac-secret-key-123456",
+		serverKey,
+		"development",
+		&HTTPMidtransSnapClient{coreBaseURL: errSrv.URL, serverKey: serverKey, client: errSrv.Client()},
+	)
+	pendingTx, err := svcErr.GetBooking(context.Background(), "tx-1", "usr-1")
+	if err != nil {
+		t.Fatalf("expected GetBooking to ignore CheckOrderStatus error, got %v", err)
+	}
+	if pendingTx.PaymentStatus != domain.PaymentStatusPending {
+		t.Fatalf("expected PENDING when CheckOrderStatus fails, got %s", pendingTx.PaymentStatus)
 	}
 }
