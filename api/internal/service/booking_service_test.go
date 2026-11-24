@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ type stubBookingRepo struct {
 	snapURL           string
 	qrString          string
 	invoiceNumber     string
+	lookupInvoiceSeen string
 	settledGatewayRef string
 }
 
@@ -65,7 +67,8 @@ func (r *stubBookingRepo) FindBookingByID(_ context.Context, transactionID, _ st
 	}, nil
 }
 
-func (r *stubBookingRepo) FindBookingIDByInvoice(_ context.Context, _ string) (string, error) {
+func (r *stubBookingRepo) FindBookingIDByInvoice(_ context.Context, invoiceNumber string) (string, error) {
+	r.lookupInvoiceSeen = invoiceNumber
 	return "tx-1", nil
 }
 
@@ -181,7 +184,7 @@ func TestMidtransWebhookSignatureVerification(t *testing.T) {
 	svc := NewBookingService(repo, "qr-hmac-secret-key-123456", serverKey, "production", nil)
 	ctx := context.Background()
 
-	orderID := "PWL/INV/20261121/0042"
+	orderID := "PWL-INV-20261121-0042"
 	statusCode := "200"
 	grossAmount := "105000.00"
 	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + serverKey))
@@ -197,6 +200,9 @@ func TestMidtransWebhookSignatureVerification(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected valid Midtrans webhook to succeed, got %v", err)
+	}
+	if repo.lookupInvoiceSeen != "PWL/INV/20261121/0042" {
+		t.Fatalf("expected invoice lookup PWL/INV/20261121/0042, got %q", repo.lookupInvoiceSeen)
 	}
 	if tx.PaymentStatus != domain.PaymentStatusPaid {
 		t.Fatalf("expected PAID, got %s", tx.PaymentStatus)
@@ -261,8 +267,9 @@ func TestCreateBookingWithMidtransSnap(t *testing.T) {
 	if gotAuth != expectedAuth {
 		t.Fatalf("expected Basic auth %q, got %q", expectedAuth, gotAuth)
 	}
-	if gotOrderID != tx.InvoiceNumber || gotGross != 105000 {
-		t.Fatalf("unexpected Snap payload order=%s gross=%d", gotOrderID, gotGross)
+	wantOrderID := toMidtransOrderID(tx.InvoiceNumber)
+	if strings.Contains(gotOrderID, "/") || gotOrderID != wantOrderID || gotGross != 105000 {
+		t.Fatalf("unexpected Snap payload order=%s want=%s gross=%d", gotOrderID, wantOrderID, gotGross)
 	}
 	if tx.SnapToken != "snap-tok-123" || repo.snapToken != "snap-tok-123" {
 		t.Fatalf("expected snapToken persisted and returned, got tx=%q repo=%q", tx.SnapToken, repo.snapToken)
@@ -294,7 +301,7 @@ func TestCreateBookingWithMidtransSnapFallback(t *testing.T) {
 	}
 
 	wantToken := "sandbox-snap-" + tx.InvoiceNumber
-	wantURL := "https://simulator.sandbox.midtrans.com/qris/index?order_id=" + tx.InvoiceNumber + "&amount=105000"
+	wantURL := "https://simulator.sandbox.midtrans.com/qris/index?order_id=" + toMidtransOrderID(tx.InvoiceNumber) + "&amount=105000"
 	if tx.SnapToken != wantToken || repo.snapToken != wantToken {
 		t.Fatalf("expected fallback snapToken %q, got tx=%q repo=%q", wantToken, tx.SnapToken, repo.snapToken)
 	}
@@ -420,8 +427,9 @@ func TestCreateBookingWithMidtransCoreQRIS(t *testing.T) {
 		t.Fatalf("CreateBooking with Core QRIS: %v", err)
 	}
 
-	if gotPaymentType != "qris" || gotOrderID != tx.InvoiceNumber || gotGross != 105000 {
-		t.Fatalf("unexpected Core QRIS payload: type=%s order=%s gross=%d", gotPaymentType, gotOrderID, gotGross)
+	wantOrderID := toMidtransOrderID(tx.InvoiceNumber)
+	if gotPaymentType != "qris" || strings.Contains(gotOrderID, "/") || gotOrderID != wantOrderID || gotGross != 105000 {
+		t.Fatalf("unexpected Core QRIS payload: type=%s order=%s want=%s gross=%d", gotPaymentType, gotOrderID, wantOrderID, gotGross)
 	}
 	if tx.QRString != expectedQRString || repo.qrString != expectedQRString {
 		t.Fatalf("expected qrString %q persisted and returned, got tx=%q repo=%q", expectedQRString, tx.QRString, repo.qrString)
@@ -440,7 +448,7 @@ func TestGetBookingAutoSyncsMidtransSettlement(t *testing.T) {
 		gotStatusPath = r.URL.EscapedPath()
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"order_id":"` + invoiceNumber + `","transaction_id":"` + midtransTxID + `","transaction_status":"settlement","status_code":"200"}`))
+		_, _ = w.Write([]byte(`{"order_id":"PWL-INV-20261124-ABCD","transaction_id":"` + midtransTxID + `","transaction_status":"settlement","status_code":"200"}`))
 	}))
 	defer coreSrv.Close()
 
@@ -457,7 +465,7 @@ func TestGetBookingAutoSyncsMidtransSettlement(t *testing.T) {
 		t.Fatalf("GetBooking auto-sync: %v", err)
 	}
 
-	expectedPath := "/v2/PWL%2FINV%2F20261124%2FABCD/status"
+	expectedPath := "/v2/PWL-INV-20261124-ABCD/status"
 	if gotStatusPath != expectedPath {
 		t.Fatalf("expected status path %q, got %q", expectedPath, gotStatusPath)
 	}
