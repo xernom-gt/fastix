@@ -66,6 +66,9 @@ function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCa
               </h2>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <span className="px-3 py-1 rounded-full bg-white/15 text-white text-xs font-bold">
+                {visitorCount} Orang
+              </span>
               <span
                 className={`px-3 py-1 rounded-full text-xs font-bold ${
                   ticket.status === 'VALID'
