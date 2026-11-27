@@ -473,6 +473,10 @@ func (s *AuthService) GateLogin(ctx context.Context, req domain.GateLoginRequest
 }
 
 func (s *AuthService) issueToken(subjectID, role, venueID, venueCode string) (string, error) {
+	return issueJWT(s.jwtSecret, subjectID, role, venueID, venueCode)
+}
+
+func issueJWT(jwtSecret, subjectID, role, venueID, venueCode string) (string, error) {
 	now := time.Now().UTC()
 	claims := domain.AuthClaims{
 		SubjectID: subjectID,
@@ -487,7 +491,7 @@ func (s *AuthService) issueToken(subjectID, role, venueID, venueCode string) (st
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(s.jwtSecret))
+	signed, err := token.SignedString([]byte(jwtSecret))
 	if err != nil {
 		return "", fmt.Errorf("sign jwt: %w", err)
 	}

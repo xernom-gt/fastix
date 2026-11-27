@@ -23,14 +23,18 @@ type OperationsService struct {
 	repo         repository.OperationsRepository
 	qrHMACSecret string
 	kybAESKey    []byte
+	jwtSecret    string
+	isDev        bool
 }
 
 // NewOperationsService constructs an OperationsService.
-func NewOperationsService(repo repository.OperationsRepository, qrHMACSecret string, kybAESKey []byte) *OperationsService {
+func NewOperationsService(repo repository.OperationsRepository, qrHMACSecret string, kybAESKey []byte, jwtSecret, appEnv string) *OperationsService {
 	return &OperationsService{
 		repo:         repo,
 		qrHMACSecret: qrHMACSecret,
 		kybAESKey:    kybAESKey,
+		jwtSecret:    jwtSecret,
+		isDev:        strings.EqualFold(appEnv, "development"),
 	}
 }
 
@@ -161,6 +165,67 @@ func (s *OperationsService) SubmitKYB(ctx context.Context, userID string, req do
 	}
 
 	return s.repo.UpsertKYB(ctx, userID, encKTP, encNPWP, req)
+}
+
+func (s *OperationsService) DemoApproveKYB(ctx context.Context, userID string, req domain.DemoApproveKYBRequest) (domain.AuthTokenResponse, error) {
+	if !s.isDev {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrForbidden, "DEV_ONLY", "Endpoint demo persetujuan mitra hanya tersedia pada mode development.", nil)
+	}
+
+	venueName := strings.TrimSpace(req.VenueName)
+	if venueName == "" {
+		venueName = "Destinasi Wisata Mitra"
+	}
+
+	kotaKode := strings.ToLower(strings.TrimSpace(req.KotaKode))
+	if kotaKode == "" {
+		kotaKode = "bali"
+	}
+
+	alamat := strings.TrimSpace(req.Alamat)
+	if alamat == "" {
+		alamat = "Indonesia"
+	}
+
+	city, lokasi := resolveRegionCity(kotaKode)
+
+	suffix, err := randomHexUpper(2)
+	if err != nil {
+		return domain.AuthTokenResponse{}, fmt.Errorf("generate demo venue code: %w", err)
+	}
+	venueCode := "LOKA-" + suffix
+
+	pinHash, err := bcrypt.GenerateFromPassword([]byte("123456"), bcryptCost)
+	if err != nil {
+		return domain.AuthTokenResponse{}, fmt.Errorf("hash default staff pin: %w", err)
+	}
+
+	profile, err := s.repo.DemoApproveKYBTx(ctx, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, string(pinHash))
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrNotFound, "USER_NOT_FOUND", "Pengguna tidak ditemukan.", nil)
+	}
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
+	token, err := issueJWT(s.jwtSecret, profile.ID, profile.Role, "", "")
+	if err != nil {
+		return domain.AuthTokenResponse{}, err
+	}
+
+	return domain.AuthTokenResponse{
+		AccessToken: token,
+		User:        profile,
+	}, nil
+}
+
+func resolveRegionCity(kotaKode string) (city, lokasi string) {
+	for _, r := range defaultRegions {
+		if strings.EqualFold(r.Kode, kotaKode) {
+			return r.Nama, r.Nama + ", " + r.Provinsi
+		}
+	}
+	return kotaKode, kotaKode
 }
 
 func (s *OperationsService) ListMitraVenues(ctx context.Context, ownerID string) ([]domain.MitraVenueDTO, error) {

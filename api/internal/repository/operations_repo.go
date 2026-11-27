@@ -19,6 +19,7 @@ type OperationsRepository interface {
 	ReleaseEscrowHPlusOne(ctx context.Context, todayDate string) (int64, error)
 
 	UpsertKYB(ctx context.Context, userID, encKTP, encNPWP string, req domain.SubmitKYBRequest) (domain.KYBSubmissionResponse, error)
+	DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error)
 	ListMitraVenues(ctx context.Context, ownerID, todayDate string) ([]domain.MitraVenueDTO, error)
 	UpdateMitraVenue(ctx context.Context, ownerID, venueID, todayDate string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error)
 	CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error)
@@ -291,6 +292,118 @@ func (r *PgxOperationsRepository) UpsertKYB(ctx context.Context, userID, encKTP,
 		return domain.KYBSubmissionResponse{}, fmt.Errorf("upsert kyb: %w", err)
 	}
 	return res, nil
+}
+
+func (r *PgxOperationsRepository) DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.UserProfile{}, fmt.Errorf("begin demo approve kyb tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 1. Ensure owner_legalities exists and is APPROVED.
+	var legalityID string
+	err = tx.QueryRow(ctx, `
+		UPDATE owner_legalities
+		SET verification_status = 'APPROVED', verified_at = NOW(), updated_at = NOW()
+		WHERE user_id = $1::uuid
+		RETURNING id::text
+	`, userID).Scan(&legalityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO owner_legalities (
+				user_id, ktp_number, ktp_photo_url, npwp_number, npwp_photo_url,
+				nib_number, bank_code, bank_account_number, bank_account_name,
+				verification_status, verified_at, updated_at
+			)
+			VALUES (
+				$1::uuid, 'DEMO-KTP', 'https://example.com/demo-ktp.png', 'DEMO-NPWP', 'https://example.com/demo-npwp.png',
+				'DEMO-NIB', 'BCA', '0000000000', 'Mitra Demo',
+				'APPROVED', NOW(), NOW()
+			)
+			RETURNING id::text
+		`, userID).Scan(&legalityID)
+	}
+	if err != nil {
+		return domain.UserProfile{}, fmt.Errorf("approve owner legality: %w", err)
+	}
+
+	// 2. Promote user role to MITRA and mark verified.
+	var profile domain.UserProfile
+	err = tx.QueryRow(ctx, `
+		UPDATE users
+		SET role = 'MITRA', is_verified = TRUE, updated_at = NOW()
+		WHERE id = $1::uuid
+		RETURNING id::text, full_name, phone_number, COALESCE(email, ''), role::text
+	`, userID).Scan(&profile.ID, &profile.FullName, &profile.PhoneNumber, &profile.Email, &profile.Role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UserProfile{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.UserProfile{}, fmt.Errorf("promote user to mitra: %w", err)
+	}
+
+	// 3. Provision default venue, ticket, gate staff, and owner_balances if the user has no venues yet.
+	rows, err := tx.Query(ctx, `SELECT id::text FROM venues WHERE owner_id = $1::uuid ORDER BY created_at ASC`, userID)
+	if err != nil {
+		return domain.UserProfile{}, fmt.Errorf("query existing mitra venues: %w", err)
+	}
+	var ownedVenueIDs []string
+	for rows.Next() {
+		var vid string
+		if err := rows.Scan(&vid); err != nil {
+			rows.Close()
+			return domain.UserProfile{}, fmt.Errorf("scan existing venue id: %w", err)
+		}
+		ownedVenueIDs = append(ownedVenueIDs, vid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.UserProfile{}, fmt.Errorf("iterate existing venue ids: %w", err)
+	}
+	rows.Close()
+
+	if len(ownedVenueIDs) == 0 {
+		var newVenueID string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO venues (
+				owner_id, legality_id, venue_code, name, kota_kode, city, lokasi, address,
+				kategori, harga_mulai, is_published, approved_at
+			)
+			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, 'alam_geopark', 50000, TRUE, NOW())
+			RETURNING id::text
+		`, userID, legalityID, venueCode, venueName, kotaKode, city, lokasi, alamat).Scan(&newVenueID); err != nil {
+			return domain.UserProfile{}, fmt.Errorf("insert default mitra venue: %w", err)
+		}
+		ownedVenueIDs = append(ownedVenueIDs, newVenueID)
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tickets (venue_id, title, description, price, daily_quota, is_active)
+			VALUES ($1::uuid, 'Tiket Masuk Reguler', 'Tiket masuk reguler destinasi wisata', 50000, 200, TRUE)
+		`, newVenueID); err != nil {
+			return domain.UserProfile{}, fmt.Errorf("insert default ticket: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO staffs (venue_id, staff_name, pin_hash, is_active)
+			VALUES ($1::uuid, 'Staf Gate Utama', $2, TRUE)
+		`, newVenueID, defaultPinHash); err != nil {
+			return domain.UserProfile{}, fmt.Errorf("insert default gate staff: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO owner_balances (owner_id) VALUES ($1::uuid) ON CONFLICT (owner_id) DO NOTHING
+		`, userID); err != nil {
+			return domain.UserProfile{}, fmt.Errorf("ensure owner balance: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.UserProfile{}, fmt.Errorf("commit demo approve kyb tx: %w", err)
+	}
+
+	profile.OwnedVenueIDs = ownedVenueIDs
+	return profile, nil
 }
 
 type venueRowScanner interface {

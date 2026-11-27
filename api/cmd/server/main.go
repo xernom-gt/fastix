@@ -109,7 +109,7 @@ func main() {
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
 	opsRepo := repository.NewPgxOperationsRepository(pool)
-	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey)
+	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey, cfg.JWTSecret, cfg.AppEnv)
 	opsHandler := handler.NewOperationsHandler(opsSvc)
 
 	workerCtx, cancelWorkers := context.WithCancel(rootCtx)
@@ -150,6 +150,7 @@ func main() {
 	v1.Post("/gate/sync", requireAuth, middleware.RequireRoles(domain.RoleGateStaff, domain.RoleMitra), opsHandler.GateSync)
 
 	v1.Post("/mitra/kyb", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.SubmitKYB)
+	v1.Post("/mitra/kyb/demo-approve", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.DemoApproveKYB)
 	mitraGroup := v1.Group("/mitra", requireAuth, middleware.RequireRoles(domain.RoleMitra))
 	mitraGroup.Get("/venues", opsHandler.ListMitraVenues)
 	mitraGroup.Patch("/venues/:id", opsHandler.UpdateMitraVenue)

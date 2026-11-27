@@ -99,6 +99,25 @@ func (h *OperationsHandler) SubmitKYB(c *fiber.Ctx) error {
 	return response.Created(c, res, nil)
 }
 
+func (h *OperationsHandler) DemoApproveKYB(c *fiber.Ctx) error {
+	claims, ok := middleware.GetAuthClaims(c)
+	if !ok {
+		return response.Fail(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Autentikasi diperlukan.", nil)
+	}
+	var req domain.DemoApproveKYBRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return response.Fail(c, fiber.StatusBadRequest, "INVALID_JSON", "Format JSON tidak valid.", nil)
+		}
+	}
+
+	res, err := h.svc.DemoApproveKYB(c.UserContext(), claims.SubjectID, req)
+	if err != nil {
+		return handleDomainError(c, err)
+	}
+	return response.OK(c, res, nil)
+}
+
 func (h *OperationsHandler) ListMitraVenues(c *fiber.Ctx) error {
 	claims, ok := middleware.GetAuthClaims(c)
 	if !ok {
