@@ -5,6 +5,7 @@ import {
   formatTanggalID,
   type Destinasi,
 } from '@pariwisloka/shared';
+import { VenueImage } from './VenueImage';
 
 export interface VenueEntry {
   venue: Destinasi;
@@ -35,9 +36,9 @@ export function VenueCard({
       className="group bg-white border border-gray-200 rounded-2xl p-3 shadow-[0_2px_10px_rgba(17,24,39,0.04)] hover:shadow-[0_8px_24px_rgba(17,24,39,0.08)] hover:border-gray-300 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 ease-out flex flex-col"
     >
       <div className="relative aspect-[16/9] rounded-xl bg-gray-100 overflow-hidden">
-        <img
+        <VenueImage
           src={venue.gambarUrl}
-          alt={venue.gambarAlt}
+          alt={venue.gambarAlt || venue.nama}
           width={640}
           height={360}
           loading={eager ? 'eager' : 'lazy'}

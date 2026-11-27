@@ -94,7 +94,7 @@ export default function JelajahPage() {
       usedFuzzy: smart.usedFuzzy,
       suggestedTerm: smart.suggestedTerm,
     };
-  }, [keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
+  }, [venues, keyword, kota, kategori, tanggal, sortBy, userCoords, getExtraUsedQuota]);
 
   const activeFilterCount =
     (keyword.trim() ? 1 : 0) + (kota !== 'all' ? 1 : 0) + (kategori !== 'all' ? 1 : 0);

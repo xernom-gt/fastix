@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { formatRupiah, getTodayISO } from '@pariwisloka/shared';
 import { BookingStepper } from '../components/BookingStepper';
+import { VenueImage } from '../components/VenueImage';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
 
@@ -104,9 +105,9 @@ export default function DetailPage() {
         {/* Left: Venue Details */}
         <div className="lg:col-span-7 space-y-6">
           <div className="aspect-[16/9] rounded-2xl overflow-hidden bg-gray-200 border border-gray-200">
-            <img
+            <VenueImage
               src={venue.gambarUrl}
-              alt={venue.gambarAlt}
+              alt={venue.gambarAlt || venue.nama}
               width={960}
               height={540}
               className="w-full h-full object-cover"
