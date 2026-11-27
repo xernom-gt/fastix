@@ -1,4 +1,4 @@
-import type { TicketProduct } from '@pariwisloka/shared';
+import type { KategoriWisata, TicketProduct } from '@pariwisloka/shared';
 
 export interface StaffGateAccount {
   id: string;
@@ -74,8 +74,31 @@ export interface MitraVenueDTO {
   venueCode: string;
   nama: string;
   kotaKode: string;
+  lokasi?: string;
+  alamat?: string;
+  jamBuka?: string;
+  deskripsi?: string;
+  kategori?: KategoriWisata;
+  hargaMulai?: number;
+  rating?: number;
+  jumlahUlasan?: number;
+  gambarUrl?: string;
+  gambarAlt?: string;
+  fasilitas?: string[];
+  koordinat?: {
+    lat: number;
+    lng: number;
+  };
   isPublished: boolean;
   tickets: TicketProduct[];
+}
+
+export interface UpdateMitraVenueRequest {
+  nama?: string;
+  alamat?: string;
+  jamBuka?: string;
+  deskripsi?: string;
+  fasilitas?: string[];
 }
 
 export interface CreateTicketRequest {
@@ -136,6 +159,8 @@ export interface PayoutDTO {
 }
 
 export interface MitraFinanceSummary {
+  grossRevenue?: number;
+  platformFee?: number;
   holdingPlatformBalance: number;
   pendingBalance: number;
   availableBalance: number;
@@ -194,6 +219,16 @@ export async function mitraApiRequest<T>(endpoint: string, options: RequestInit 
 
 export async function apiFetchMitraVenues(): Promise<MitraVenueDTO[]> {
   return mitraApiRequest<MitraVenueDTO[]>('/mitra/venues');
+}
+
+export async function apiUpdateMitraVenue(
+  venueId: string,
+  payload: UpdateMitraVenueRequest,
+): Promise<MitraVenueDTO> {
+  return mitraApiRequest<MitraVenueDTO>(`/mitra/venues/${encodeURIComponent(venueId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function apiCreateMitraTicket(req: CreateTicketRequest): Promise<TicketProduct> {
