@@ -338,7 +338,7 @@ func (r *PgxBookingRepository) SettlePaymentTx(
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, quantity
+		SELECT id::text
 		FROM transaction_items
 		WHERE transaction_id = $1::uuid
 	`, transactionID)
@@ -346,34 +346,28 @@ func (r *PgxBookingRepository) SettlePaymentTx(
 		return domain.TransactionDTO{}, fmt.Errorf("query items for redemption: %w", err)
 	}
 
-	type itemCount struct {
-		id  string
-		qty int
-	}
-	var items []itemCount
+	var itemIDs []string
 	for rows.Next() {
-		var ic itemCount
-		if err := rows.Scan(&ic.id, &ic.qty); err != nil {
+		var itemID string
+		if err := rows.Scan(&itemID); err != nil {
 			rows.Close()
 			return domain.TransactionDTO{}, fmt.Errorf("scan item for redemption: %w", err)
 		}
-		items = append(items, ic)
+		itemIDs = append(itemIDs, itemID)
 	}
 	rows.Close()
 
 	bookingDateStr := bookingDate.Format("2006-01-02")
-	for _, item := range items {
-		for i := 0; i < item.qty; i++ {
-			redemption, err := buildRedemption(item.id, venueID, bookingDateStr)
-			if err != nil {
-				return domain.TransactionDTO{}, fmt.Errorf("build redemption: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO redemptions (transaction_item_id, ticket_code, signature_hash, status)
-				VALUES ($1::uuid, $2, $3, 'VALID')
-			`, redemption.TransactionItemID, redemption.TicketCode, redemption.SignatureHash); err != nil {
-				return domain.TransactionDTO{}, fmt.Errorf("insert redemption: %w", err)
-			}
+	for _, itemID := range itemIDs {
+		redemption, err := buildRedemption(itemID, venueID, bookingDateStr)
+		if err != nil {
+			return domain.TransactionDTO{}, fmt.Errorf("build redemption: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO redemptions (transaction_item_id, ticket_code, signature_hash, status)
+			VALUES ($1::uuid, $2, $3, 'VALID')
+		`, redemption.TransactionItemID, redemption.TicketCode, redemption.SignatureHash); err != nil {
+			return domain.TransactionDTO{}, fmt.Errorf("insert redemption: %w", err)
 		}
 	}
 
@@ -387,7 +381,8 @@ func (r *PgxBookingRepository) ListTicketsByCustomer(ctx context.Context, custom
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			r.id::text, r.ticket_code, tr.invoice_number, v.id::text, v.venue_code, v.name, v.address,
-			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at
+			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at,
+			CASE WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1 THEN ti.quantity ELSE 1 END::int AS quantity
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
 		JOIN transactions tr ON tr.id = ti.transaction_id
@@ -409,7 +404,8 @@ func (r *PgxBookingRepository) FindTicketByCode(ctx context.Context, ticketCode,
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			r.id::text, r.ticket_code, tr.invoice_number, v.id::text, v.venue_code, v.name, v.address,
-			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at
+			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at,
+			CASE WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1 THEN ti.quantity ELSE 1 END::int AS quantity
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
 		JOIN transactions tr ON tr.id = ti.transaction_id
@@ -510,6 +506,7 @@ func scanETickets(rows pgx.Rows) ([]domain.ETicketDTO, error) {
 			&dto.HolderName,
 			&paidAt,
 			&redeemedAt,
+			&dto.Quantity,
 		); err != nil {
 			return nil, fmt.Errorf("scan e-ticket: %w", err)
 		}

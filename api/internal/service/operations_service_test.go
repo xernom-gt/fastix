@@ -19,6 +19,7 @@ import (
 
 type stubOpsRepo struct {
 	redeemedOnce   bool
+	redeemQty      int
 	pendingAdded   int64
 	venueOwnerID   string
 	venueID        string
@@ -47,11 +48,16 @@ func (r *stubOpsRepo) RedeemTicketTx(_ context.Context, ticketCode, _, _, _ stri
 			"redeemedAt": redeemedAt.Format(time.RFC3339),
 		})
 	}
+	qty := r.redeemQty
+	if qty <= 0 {
+		qty = 1
+	}
 	r.redeemedOnce = true
-	r.pendingAdded += 50000
+	r.pendingAdded += 50000 * int64(qty)
 	return domain.GateRedeemResult{
 		TicketCode: ticketCode,
 		Status:     domain.RedemptionStatusRedeemed,
+		Quantity:   qty,
 		RedeemedAt: redeemedAt.Format(time.RFC3339),
 	}, nil
 }
@@ -200,8 +206,19 @@ func TestGateRedeemAndDoubleScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first RedeemAtGate: %v", err)
 	}
-	if res.Status != domain.RedemptionStatusRedeemed || repo.pendingAdded != 50000 {
+	if res.Status != domain.RedemptionStatusRedeemed || res.Quantity != 1 || repo.pendingAdded != 50000 {
 		t.Fatalf("unexpected redeem result: %+v pending=%d", res, repo.pendingAdded)
+	}
+
+	// Group ticket scan reports Quantity=N and credits N * unitPrice
+	groupRepo := &stubOpsRepo{redeemQty: 5}
+	groupSvc := NewOperationsService(groupRepo, hmacSecret, make([]byte, 32), "test-jwt-secret", "development")
+	groupRes, err := groupSvc.RedeemAtGate(ctx, "v-borobudur", "stf-1", domain.GateRedeemRequest{QRPayload: payload})
+	if err != nil {
+		t.Fatalf("group RedeemAtGate: %v", err)
+	}
+	if groupRes.Quantity != 5 || groupRepo.pendingAdded != 250000 {
+		t.Fatalf("expected Quantity=5 and pending=250000, got %+v pending=%d", groupRes, groupRepo.pendingAdded)
 	}
 
 	// Second scan must be rejected with ErrConflict (ALREADY_REDEEMED)

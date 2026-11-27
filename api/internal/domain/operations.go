@@ -25,6 +25,7 @@ type GateRedeemResult struct {
 	Status     string  `json:"status"`
 	TicketName string  `json:"ticketName"`
 	HolderName string  `json:"holderName"`
+	Quantity   int     `json:"quantity"`
 	RedeemedAt string  `json:"redeemedAt"`
 	Message    string  `json:"message"`
 }
