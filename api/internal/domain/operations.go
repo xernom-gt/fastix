@@ -67,12 +67,33 @@ type KYBSubmissionResponse struct {
 
 // MitraVenueDTO represents an owner's venue with its ticket products.
 type MitraVenueDTO struct {
-	ID          string          `json:"id"`
-	VenueCode   string          `json:"venueCode"`
-	Nama        string          `json:"nama"`
-	KotaKode    string          `json:"kotaKode"`
-	IsPublished bool            `json:"isPublished"`
-	Tickets     []TicketProduct `json:"tickets"`
+	ID           string          `json:"id"`
+	VenueCode    string          `json:"venueCode"`
+	Nama         string          `json:"nama"`
+	KotaKode     string          `json:"kotaKode"`
+	Lokasi       string          `json:"lokasi"`
+	Alamat       string          `json:"alamat"`
+	JamBuka      string          `json:"jamBuka"`
+	Deskripsi    string          `json:"deskripsi"`
+	Kategori     string          `json:"kategori"`
+	HargaMulai   int64           `json:"hargaMulai"`
+	Rating       float64         `json:"rating"`
+	JumlahUlasan int             `json:"jumlahUlasan"`
+	GambarURL    string          `json:"gambarUrl"`
+	GambarAlt    string          `json:"gambarAlt"`
+	Fasilitas    []string        `json:"fasilitas"`
+	Koordinat    GeoPoint        `json:"koordinat"`
+	IsPublished  bool            `json:"isPublished"`
+	Tickets      []TicketProduct `json:"tickets"`
+}
+
+// UpdateMitraVenueRequest is the input for PATCH /api/v1/mitra/venues/:id.
+type UpdateMitraVenueRequest struct {
+	Nama      string   `json:"nama"`
+	Alamat    string   `json:"alamat"`
+	JamBuka   string   `json:"jamBuka"`
+	Deskripsi string   `json:"deskripsi"`
+	Fasilitas []string `json:"fasilitas"`
 }
 
 // CreateTicketRequest is the input for POST /api/v1/mitra/tickets.
@@ -141,6 +162,8 @@ type PayoutDTO struct {
 
 // MitraFinanceSummary aggregates holding platform funds, escrow balances, mutations, and payouts.
 type MitraFinanceSummary struct {
+	GrossRevenue           int64                `json:"grossRevenue"`
+	PlatformFee            int64                `json:"platformFee"`
 	HoldingPlatformBalance int64                `json:"holdingPlatformBalance"`
 	PendingBalance         int64                `json:"pendingBalance"`
 	AvailableBalance       int64                `json:"availableBalance"`

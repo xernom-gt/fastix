@@ -112,6 +112,22 @@ func (h *OperationsHandler) ListMitraVenues(c *fiber.Ctx) error {
 	return response.OK(c, venues, &response.Meta{Total: &total})
 }
 
+func (h *OperationsHandler) UpdateMitraVenue(c *fiber.Ctx) error {
+	claims, ok := middleware.GetAuthClaims(c)
+	if !ok {
+		return response.Fail(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Autentikasi diperlukan.", nil)
+	}
+	var req domain.UpdateMitraVenueRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.Fail(c, fiber.StatusBadRequest, "INVALID_JSON", "Format JSON tidak valid.", nil)
+	}
+	venue, err := h.svc.UpdateMitraVenue(c.UserContext(), claims.SubjectID, c.Params("id"), req)
+	if err != nil {
+		return handleDomainError(c, err)
+	}
+	return response.OK(c, venue, nil)
+}
+
 func (h *OperationsHandler) CreateMitraTicket(c *fiber.Ctx) error {
 	claims, ok := middleware.GetAuthClaims(c)
 	if !ok {

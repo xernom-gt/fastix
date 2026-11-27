@@ -20,6 +20,7 @@ type OperationsRepository interface {
 
 	UpsertKYB(ctx context.Context, userID, encKTP, encNPWP string, req domain.SubmitKYBRequest) (domain.KYBSubmissionResponse, error)
 	ListMitraVenues(ctx context.Context, ownerID, todayDate string) ([]domain.MitraVenueDTO, error)
+	UpdateMitraVenue(ctx context.Context, ownerID, venueID, todayDate string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error)
 	CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error)
 	UpdateMitraTicket(ctx context.Context, ownerID, ticketID string, req domain.UpdateTicketRequest) (domain.TicketProduct, error)
 	ListMitraStaffs(ctx context.Context, ownerID string) ([]domain.MitraStaffDTO, error)
@@ -292,9 +293,90 @@ func (r *PgxOperationsRepository) UpsertKYB(ctx context.Context, userID, encKTP,
 	return res, nil
 }
 
+type venueRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanMitraVenue(row venueRowScanner) (domain.MitraVenueDTO, error) {
+	var (
+		v   domain.MitraVenueDTO
+		lat *float64
+		lng *float64
+	)
+	if err := row.Scan(
+		&v.ID,
+		&v.VenueCode,
+		&v.Nama,
+		&v.KotaKode,
+		&v.Lokasi,
+		&v.Alamat,
+		&v.JamBuka,
+		&v.Deskripsi,
+		&v.Kategori,
+		&v.HargaMulai,
+		&v.Rating,
+		&v.JumlahUlasan,
+		&v.GambarURL,
+		&v.GambarAlt,
+		&v.Fasilitas,
+		&lat,
+		&lng,
+		&v.IsPublished,
+	); err != nil {
+		return domain.MitraVenueDTO{}, err
+	}
+	if lat != nil {
+		v.Koordinat.Lat = *lat
+	}
+	if lng != nil {
+		v.Koordinat.Lng = *lng
+	}
+	if v.Fasilitas == nil {
+		v.Fasilitas = []string{}
+	}
+	v.Tickets = []domain.TicketProduct{}
+	return v, nil
+}
+
+func (r *PgxOperationsRepository) listMitraVenueTickets(ctx context.Context, venueID, todayDate string) ([]domain.TicketProduct, error) {
+	tRows, err := r.pool.Query(ctx, `
+		SELECT
+			t.id::text, t.venue_id::text, t.title, t.description, t.price::bigint, t.daily_quota,
+			COALESCE(SUM(CASE WHEN tr.payment_status = 'PAID' THEN ti.quantity ELSE 0 END), 0)::int,
+			COALESCE(SUM(CASE WHEN tr.payment_status = 'PENDING' AND tr.expired_at > NOW() THEN ti.quantity ELSE 0 END), 0)::int
+		FROM tickets t
+		LEFT JOIN transaction_items ti ON ti.ticket_id = t.id AND ti.booking_date = $2::date
+		LEFT JOIN transactions tr ON tr.id = ti.transaction_id
+		WHERE t.venue_id = $1::uuid
+		GROUP BY t.id
+		ORDER BY t.created_at ASC
+	`, venueID, todayDate)
+	if err != nil {
+		return nil, fmt.Errorf("list mitra tickets: %w", err)
+	}
+	defer tRows.Close()
+
+	tickets := []domain.TicketProduct{}
+	for tRows.Next() {
+		var tkt domain.TicketProduct
+		if err := tRows.Scan(&tkt.ID, &tkt.VenueID, &tkt.Title, &tkt.Description, &tkt.Price, &tkt.DailyQuota, &tkt.UsedQuotaPaid, &tkt.UsedQuotaPending); err != nil {
+			return nil, fmt.Errorf("scan mitra ticket: %w", err)
+		}
+		tickets = append(tickets, tkt)
+	}
+	if err := tRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate mitra tickets: %w", err)
+	}
+	return tickets, nil
+}
+
 func (r *PgxOperationsRepository) ListMitraVenues(ctx context.Context, ownerID, todayDate string) ([]domain.MitraVenueDTO, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, venue_code, name, kota_kode, is_published
+		SELECT
+			id::text, venue_code, name, kota_kode, lokasi, address, jam_buka,
+			description, kategori::text, harga_mulai::bigint, rating::float8,
+			jumlah_ulasan, gambar_url, gambar_alt, fasilitas, latitude::float8,
+			longitude::float8, is_published
 		FROM venues
 		WHERE owner_id = $1::uuid
 		ORDER BY created_at ASC
@@ -305,44 +387,62 @@ func (r *PgxOperationsRepository) ListMitraVenues(ctx context.Context, ownerID, 
 
 	venues := make([]domain.MitraVenueDTO, 0)
 	for rows.Next() {
-		var v domain.MitraVenueDTO
-		if err := rows.Scan(&v.ID, &v.VenueCode, &v.Nama, &v.KotaKode, &v.IsPublished); err != nil {
+		v, err := scanMitraVenue(rows)
+		if err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan mitra venue: %w", err)
 		}
-		v.Tickets = []domain.TicketProduct{}
 		venues = append(venues, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate mitra venues: %w", err)
 	}
 	rows.Close()
 
 	for i := range venues {
-		tRows, err := r.pool.Query(ctx, `
-			SELECT
-				t.id::text, t.venue_id::text, t.title, t.description, t.price::bigint, t.daily_quota,
-				COALESCE(SUM(CASE WHEN tr.payment_status = 'PAID' THEN ti.quantity ELSE 0 END), 0)::int,
-				COALESCE(SUM(CASE WHEN tr.payment_status = 'PENDING' AND tr.expired_at > NOW() THEN ti.quantity ELSE 0 END), 0)::int
-			FROM tickets t
-			LEFT JOIN transaction_items ti ON ti.ticket_id = t.id AND ti.booking_date = $2::date
-			LEFT JOIN transactions tr ON tr.id = ti.transaction_id
-			WHERE t.venue_id = $1::uuid
-			GROUP BY t.id
-			ORDER BY t.created_at ASC
-		`, venues[i].ID, todayDate)
+		tickets, err := r.listMitraVenueTickets(ctx, venues[i].ID, todayDate)
 		if err != nil {
-			return nil, fmt.Errorf("list mitra tickets: %w", err)
+			return nil, err
 		}
-		for tRows.Next() {
-			var tkt domain.TicketProduct
-			if err := tRows.Scan(&tkt.ID, &tkt.VenueID, &tkt.Title, &tkt.Description, &tkt.Price, &tkt.DailyQuota, &tkt.UsedQuotaPaid, &tkt.UsedQuotaPending); err != nil {
-				tRows.Close()
-				return nil, fmt.Errorf("scan mitra ticket: %w", err)
-			}
-			venues[i].Tickets = append(venues[i].Tickets, tkt)
-		}
-		tRows.Close()
+		venues[i].Tickets = tickets
 	}
 
 	return venues, nil
+}
+
+func (r *PgxOperationsRepository) UpdateMitraVenue(ctx context.Context, ownerID, venueID, todayDate string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE venues
+		SET
+			name = $3,
+			address = $4,
+			jam_buka = $5,
+			description = $6,
+			fasilitas = $7,
+			updated_at = NOW()
+		WHERE id = $1::uuid AND owner_id = $2::uuid
+		RETURNING
+			id::text, venue_code, name, kota_kode, lokasi, address, jam_buka,
+			description, kategori::text, harga_mulai::bigint, rating::float8,
+			jumlah_ulasan, gambar_url, gambar_alt, fasilitas, latitude::float8,
+			longitude::float8, is_published
+	`, venueID, ownerID, req.Nama, req.Alamat, req.JamBuka, req.Deskripsi, req.Fasilitas)
+
+	v, err := scanMitraVenue(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.MitraVenueDTO{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.MitraVenueDTO{}, fmt.Errorf("update mitra venue: %w", err)
+	}
+
+	tickets, err := r.listMitraVenueTickets(ctx, v.ID, todayDate)
+	if err != nil {
+		return domain.MitraVenueDTO{}, err
+	}
+	v.Tickets = tickets
+	return v, nil
 }
 
 func (r *PgxOperationsRepository) CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error) {
@@ -478,6 +578,15 @@ func (r *PgxOperationsRepository) GetMitraFinance(ctx context.Context, ownerID s
 		FROM owner_balances
 		WHERE owner_id = $1::uuid
 	`, ownerID).Scan(&summary.PendingBalance, &summary.AvailableBalance)
+
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(total_amount)::bigint, 0), COALESCE(SUM(platform_fee)::bigint, 0)
+		FROM transactions tr
+		JOIN venues v ON v.id = tr.venue_id
+		WHERE v.owner_id = $1::uuid AND tr.payment_status = 'PAID'
+	`, ownerID).Scan(&summary.GrossRevenue, &summary.PlatformFee); err != nil {
+		return summary, fmt.Errorf("query gross revenue and platform fee: %w", err)
+	}
 
 	if err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(ti.unit_price), 0)::bigint
