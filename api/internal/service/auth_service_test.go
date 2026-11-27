@@ -213,6 +213,105 @@ func TestGateLogin(t *testing.T) {
 	}
 }
 
+type stubOTPEmailSender struct {
+	calls   int
+	toEmail string
+	name    string
+	otpCode string
+	err     error
+}
+
+func (s *stubOTPEmailSender) SendRegistrationOTP(_ context.Context, toEmail, fullName, otpCode string) error {
+	s.calls++
+	s.toEmail = toEmail
+	s.name = fullName
+	s.otpCode = otpCode
+	return s.err
+}
+
+func TestRegisterSendsOTPEmail(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("sends email with valid 6-digit OTP", func(t *testing.T) {
+		repo := newStubAuthRepo()
+		sender := &stubOTPEmailSender{}
+		svc := NewAuthService(repo, "test-secret-key-123456", "production", "", nil).WithEmailSender(sender)
+
+		res, err := svc.Register(ctx, domain.RegisterRequest{
+			FullName:    "Sinta Dewi",
+			PhoneNumber: "081298765432",
+			Email:       "  Sinta@Example.com ",
+			Password:    "rahasia123",
+		})
+		if err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		if res.DevOTP != "" {
+			t.Fatalf("expected empty devOtp in production, got %q", res.DevOTP)
+		}
+		if sender.calls != 1 {
+			t.Fatalf("expected 1 email send call, got %d", sender.calls)
+		}
+		if sender.toEmail != "sinta@example.com" {
+			t.Fatalf("expected toEmail %q, got %q", "sinta@example.com", sender.toEmail)
+		}
+		if sender.name != "Sinta Dewi" {
+			t.Fatalf("expected fullName %q, got %q", "Sinta Dewi", sender.name)
+		}
+		if len(sender.otpCode) != 6 || !isAllDigits(sender.otpCode) {
+			t.Fatalf("expected 6-digit otpCode, got %q", sender.otpCode)
+		}
+
+		// Sent OTP should verify cleanly
+		verifyRes, err := svc.VerifyRegistrationOTP(ctx, domain.VerifyOTPRequest{
+			Email:   "sinta@example.com",
+			OTPCode: sender.otpCode,
+		})
+		if err != nil {
+			t.Fatalf("VerifyRegistrationOTP: %v", err)
+		}
+		if verifyRes.AccessToken == "" {
+			t.Fatal("expected non-empty accessToken")
+		}
+	})
+
+	t.Run("returns EMAIL_SEND_FAILED in production when sender fails", func(t *testing.T) {
+		repo := newStubAuthRepo()
+		sender := &stubOTPEmailSender{err: errors.New("smtp dial failed")}
+		svc := NewAuthService(repo, "test-secret-key-123456", "production", "", nil).WithEmailSender(sender)
+
+		_, err := svc.Register(ctx, domain.RegisterRequest{
+			FullName:    "Sinta Dewi",
+			PhoneNumber: "081298765432",
+			Email:       "sinta@example.com",
+			Password:    "rahasia123",
+		})
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) || appErr.Code != "EMAIL_SEND_FAILED" {
+			t.Fatalf("expected AppError EMAIL_SEND_FAILED, got %v", err)
+		}
+	})
+
+	t.Run("continues with devOtp in development when sender fails", func(t *testing.T) {
+		repo := newStubAuthRepo()
+		sender := &stubOTPEmailSender{err: errors.New("smtp not configured")}
+		svc := NewAuthService(repo, "test-secret-key-123456", "development", "", nil).WithEmailSender(sender)
+
+		res, err := svc.Register(ctx, domain.RegisterRequest{
+			FullName:    "Sinta Dewi",
+			PhoneNumber: "081298765432",
+			Email:       "sinta@example.com",
+			Password:    "rahasia123",
+		})
+		if err != nil {
+			t.Fatalf("expected no error in dev mode, got %v", err)
+		}
+		if len(res.DevOTP) != 6 {
+			t.Fatalf("expected 6-digit devOtp, got %q", res.DevOTP)
+		}
+	})
+}
+
 type stubGoogleVerifier struct {
 	claims domain.GoogleTokenClaims
 	err    error

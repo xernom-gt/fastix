@@ -25,6 +25,11 @@ type Config struct {
 	MidtransClientKey  string
 	MidtransServerKey  string
 	GoogleClientID     string
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUser           string
+	SMTPPass           string
+	SMTPFrom           string
 }
 
 // Load reads .env if present and returns validated application configuration.
@@ -49,6 +54,11 @@ func Load() (Config, error) {
 		MidtransClientKey:  strings.TrimSpace(os.Getenv("MIDTRANS_CLIENT_KEY")),
 		MidtransServerKey:  strings.TrimSpace(os.Getenv("MIDTRANS_SERVER_KEY")),
 		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		SMTPHost:           getEnvOrDefault("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:           getEnvOrDefault("SMTP_PORT", "587"),
+		SMTPUser:           strings.TrimSpace(os.Getenv("SMTP_USER")),
+		SMTPPass:           strings.ReplaceAll(strings.TrimSpace(os.Getenv("SMTP_PASS")), " ", ""),
+		SMTPFrom:           strings.TrimSpace(os.Getenv("SMTP_FROM")),
 	}
 
 	if len(cfg.JWTSecret) < 16 {

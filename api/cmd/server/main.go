@@ -94,7 +94,9 @@ func main() {
 	app.Use(middleware.NewCORS(cfg.CORSAllowedOrigins))
 
 	authRepo := repository.NewPgxAuthRepository(pool)
-	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv, cfg.GoogleClientID, service.NewHTTPGoogleTokenVerifier())
+	smtpSender := service.NewSMTPOTPEmailSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+	authSvc := service.NewAuthService(authRepo, cfg.JWTSecret, cfg.AppEnv, cfg.GoogleClientID, service.NewHTTPGoogleTokenVerifier()).
+		WithEmailSender(smtpSender)
 	authHandler := handler.NewAuthHandler(authSvc)
 
 	discoveryRepo := repository.NewPgxDiscoveryRepository(pool)
@@ -107,7 +109,7 @@ func main() {
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
 	opsRepo := repository.NewPgxOperationsRepository(pool)
-	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey)
+	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey, cfg.JWTSecret, cfg.AppEnv)
 	opsHandler := handler.NewOperationsHandler(opsSvc)
 
 	workerCtx, cancelWorkers := context.WithCancel(rootCtx)
@@ -148,6 +150,7 @@ func main() {
 	v1.Post("/gate/sync", requireAuth, middleware.RequireRoles(domain.RoleGateStaff, domain.RoleMitra), opsHandler.GateSync)
 
 	v1.Post("/mitra/kyb", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.SubmitKYB)
+	v1.Post("/mitra/kyb/demo-approve", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.DemoApproveKYB)
 	mitraGroup := v1.Group("/mitra", requireAuth, middleware.RequireRoles(domain.RoleMitra))
 	mitraGroup.Get("/venues", opsHandler.ListMitraVenues)
 	mitraGroup.Patch("/venues/:id", opsHandler.UpdateMitraVenue)
@@ -176,9 +179,14 @@ func main() {
 	if snapClient.CheckConnection(rootCtx) {
 		midtransStatus = "connected"
 	}
+	smtpStatus := "disconnected"
+	if smtpSender.IsConfigured() {
+		smtpStatus = fmt.Sprintf("connected (%s)", cfg.SMTPUser)
+	}
 	fmt.Printf("\nFastix API (%s) listening on %s\n", cfg.AppEnv, addr)
 	fmt.Printf("database : connected\n")
-	fmt.Printf("midtrans : %s\n\n", midtransStatus)
+	fmt.Printf("midtrans : %s\n", midtransStatus)
+	fmt.Printf("smtp     : %s\n\n", smtpStatus)
 
 	if err := app.Listen(addr); err != nil {
 		logger.Error("server stopped with error", "error", err)

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"fastix/api/internal/domain"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type stubOpsRepo struct {
@@ -18,6 +21,13 @@ type stubOpsRepo struct {
 	grossRevenue   int64
 	platformFee    int64
 	updatedRequest *domain.UpdateMitraVenueRequest
+	demoVenueCode  string
+	demoVenueName  string
+	demoKotaKode   string
+	demoCity       string
+	demoLokasi     string
+	demoAlamat     string
+	demoPinHash    string
 }
 
 func (r *stubOpsRepo) ListTodayGateTickets(_ context.Context, _, _ string) ([]domain.ETicketDTO, error) {
@@ -45,6 +55,24 @@ func (r *stubOpsRepo) ReleaseEscrowHPlusOne(_ context.Context, _ string) (int64,
 
 func (r *stubOpsRepo) UpsertKYB(_ context.Context, _, _, _ string, _ domain.SubmitKYBRequest) (domain.KYBSubmissionResponse, error) {
 	return domain.KYBSubmissionResponse{ID: "kyb-1", VerificationStatus: "PENDING"}, nil
+}
+
+func (r *stubOpsRepo) DemoApproveKYBTx(_ context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error) {
+	r.demoVenueCode = venueCode
+	r.demoVenueName = venueName
+	r.demoKotaKode = kotaKode
+	r.demoCity = city
+	r.demoLokasi = lokasi
+	r.demoAlamat = alamat
+	r.demoPinHash = defaultPinHash
+	return domain.UserProfile{
+		ID:            userID,
+		FullName:      "Mitra Demo",
+		PhoneNumber:   "08123456789",
+		Email:         "mitra@example.com",
+		Role:          domain.RoleMitra,
+		OwnedVenueIDs: []string{"v-demo-1"},
+	}, nil
 }
 
 func (r *stubOpsRepo) ListMitraVenues(_ context.Context, _, _ string) ([]domain.MitraVenueDTO, error) {
@@ -130,7 +158,7 @@ func TestAES256GCMRoundtrip(t *testing.T) {
 func TestGateRedeemAndDoubleScan(t *testing.T) {
 	const hmacSecret = "qr-hmac-secret-key-123456"
 	repo := &stubOpsRepo{}
-	svc := NewOperationsService(repo, hmacSecret, make([]byte, 32))
+	svc := NewOperationsService(repo, hmacSecret, make([]byte, 32), "test-jwt-secret", "development")
 	ctx := context.Background()
 
 	today := time.Now().In(wibZone).Format("2006-01-02")
@@ -169,7 +197,7 @@ func TestUpdateMitraVenueValidationAndOwnership(t *testing.T) {
 		venueOwnerID: ownerID,
 		venueID:      venueID,
 	}
-	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32))
+	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32), "test-jwt-secret", "development")
 	ctx := context.Background()
 
 	validReq := domain.UpdateMitraVenueRequest{
@@ -225,7 +253,7 @@ func TestGetMitraFinanceIncludesGrossRevenueAndPlatformFee(t *testing.T) {
 		platformFee:  75000,
 		pendingAdded: 1425000,
 	}
-	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32))
+	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32), "test-jwt-secret", "development")
 
 	summary, err := svc.GetMitraFinance(context.Background(), "owner-1")
 	if err != nil {
@@ -240,4 +268,67 @@ func TestGetMitraFinanceIncludesGrossRevenueAndPlatformFee(t *testing.T) {
 	if summary.PendingBalance != 1425000 {
 		t.Fatalf("expected PendingBalance=1425000, got %d", summary.PendingBalance)
 	}
+}
+
+func TestDemoApproveKYB(t *testing.T) {
+	const (
+		jwtSecret = "test-jwt-secret-key"
+		userID    = "11111111-1111-1111-1111-111111111111"
+	)
+
+	t.Run("rejected in production mode with DEV_ONLY", func(t *testing.T) {
+		repo := &stubOpsRepo{}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), jwtSecret, "production")
+
+		_, err := svc.DemoApproveKYB(context.Background(), userID, domain.DemoApproveKYBRequest{})
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden in production, got %v", err)
+		}
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) || appErr.Code != "DEV_ONLY" {
+			t.Fatalf("expected DEV_ONLY error code, got %v", err)
+		}
+	})
+
+	t.Run("succeeds in development mode and issues fresh MITRA JWT", func(t *testing.T) {
+		repo := &stubOpsRepo{}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), jwtSecret, "development")
+
+		res, err := svc.DemoApproveKYB(context.Background(), userID, domain.DemoApproveKYBRequest{})
+		if err != nil {
+			t.Fatalf("DemoApproveKYB: %v", err)
+		}
+		if res.AccessToken == "" {
+			t.Fatal("expected non-empty accessToken")
+		}
+		if res.User.Role != domain.RoleMitra {
+			t.Fatalf("expected role %q, got %q", domain.RoleMitra, res.User.Role)
+		}
+		if len(res.User.OwnedVenueIDs) != 1 || res.User.OwnedVenueIDs[0] != "v-demo-1" {
+			t.Fatalf("expected OwnedVenueIDs=[v-demo-1], got %+v", res.User.OwnedVenueIDs)
+		}
+
+		// Verify JWT claims contain MITRA role
+		var claims domain.AuthClaims
+		parsed, err := jwt.ParseWithClaims(res.AccessToken, &claims, func(_ *jwt.Token) (any, error) {
+			return []byte(jwtSecret), nil
+		})
+		if err != nil || !parsed.Valid {
+			t.Fatalf("invalid issued JWT: %v", err)
+		}
+		if claims.SubjectID != userID || claims.Role != domain.RoleMitra {
+			t.Fatalf("unexpected JWT claims: %+v", claims)
+		}
+
+		// Verify defaults passed to repository
+		if repo.demoVenueName != "Destinasi Wisata Mitra" || repo.demoKotaKode != "bali" || repo.demoAlamat != "Indonesia" {
+			t.Fatalf("unexpected default venue fields: name=%q kota=%q alamat=%q", repo.demoVenueName, repo.demoKotaKode, repo.demoAlamat)
+		}
+		if len(repo.demoVenueCode) != 9 || repo.demoVenueCode[:5] != "LOKA-" {
+			t.Fatalf("expected LOKA-XXXX venueCode, got %q", repo.demoVenueCode)
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(repo.demoPinHash), []byte("123456")); err != nil {
+			t.Fatalf("expected default staff PIN hash for 123456: %v", err)
+		}
+	})
 }

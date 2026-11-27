@@ -65,6 +65,13 @@ type KYBSubmissionResponse struct {
 	VerificationStatus string `json:"verificationStatus"`
 }
 
+// DemoApproveKYBRequest is the input for POST /api/v1/mitra/kyb/demo-approve.
+type DemoApproveKYBRequest struct {
+	VenueName string `json:"venueName"`
+	KotaKode  string `json:"kotaKode"`
+	Alamat    string `json:"alamat"`
+}
+
 // MitraVenueDTO represents an owner's venue with its ticket products.
 type MitraVenueDTO struct {
 	ID           string          `json:"id"`
