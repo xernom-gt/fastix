@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -71,6 +72,7 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:               "Fastix API",
 		DisableStartupMessage: true,
+		BodyLimit:             10 * 1024 * 1024,
 		ReadTimeout:           10 * time.Second,
 		WriteTimeout:          10 * time.Second,
 		IdleTimeout:           30 * time.Second,
@@ -108,8 +110,13 @@ func main() {
 	bookingSvc := service.NewBookingService(bookingRepo, cfg.QRHMACSecret, cfg.MidtransServerKey, cfg.AppEnv, snapClient)
 	bookingHandler := handler.NewBookingHandler(bookingSvc)
 
+	if err := os.MkdirAll(filepath.Join(cfg.UploadDir, "venues"), 0o755); err != nil {
+		logger.Warn("failed to create venue upload directory", "dir", cfg.UploadDir, "error", err)
+	}
+
 	opsRepo := repository.NewPgxOperationsRepository(pool)
-	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey, cfg.JWTSecret, cfg.AppEnv)
+	opsSvc := service.NewOperationsService(opsRepo, cfg.QRHMACSecret, cfg.KYBEncryptionKey, cfg.JWTSecret, cfg.AppEnv).
+		WithUploadDir(cfg.UploadDir)
 	opsHandler := handler.NewOperationsHandler(opsSvc)
 
 	workerCtx, cancelWorkers := context.WithCancel(rootCtx)
@@ -118,6 +125,8 @@ func main() {
 
 	authLimiter := middleware.NewRateLimiter(20, time.Minute)
 	requireAuth := middleware.RequireAuth(cfg.JWTSecret)
+
+	app.Static("/api/v1/uploads", cfg.UploadDir)
 
 	healthHandler := handler.NewHealthHandler(pool, cfg.AppEnv)
 	v1 := app.Group("/api/v1")
@@ -154,6 +163,7 @@ func main() {
 	mitraGroup := v1.Group("/mitra", requireAuth, middleware.RequireRoles(domain.RoleMitra))
 	mitraGroup.Get("/venues", opsHandler.ListMitraVenues)
 	mitraGroup.Patch("/venues/:id", opsHandler.UpdateMitraVenue)
+	mitraGroup.Post("/venues/:id/image", opsHandler.UploadMitraVenueImage)
 	mitraGroup.Post("/tickets", opsHandler.CreateMitraTicket)
 	mitraGroup.Patch("/tickets/:id", opsHandler.UpdateMitraTicket)
 	mitraGroup.Get("/staffs", opsHandler.ListMitraStaffs)

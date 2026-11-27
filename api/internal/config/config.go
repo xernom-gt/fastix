@@ -30,6 +30,7 @@ type Config struct {
 	SMTPUser           string
 	SMTPPass           string
 	SMTPFrom           string
+	UploadDir          string
 }
 
 // Load reads .env if present and returns validated application configuration.
@@ -59,6 +60,7 @@ func Load() (Config, error) {
 		SMTPUser:           strings.TrimSpace(os.Getenv("SMTP_USER")),
 		SMTPPass:           strings.ReplaceAll(strings.TrimSpace(os.Getenv("SMTP_PASS")), " ", ""),
 		SMTPFrom:           strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		UploadDir:          getEnvOrDefault("UPLOAD_DIR", "./uploads"),
 	}
 
 	if len(cfg.JWTSecret) < 16 {

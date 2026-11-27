@@ -19,9 +19,11 @@ type OperationsRepository interface {
 	ReleaseEscrowHPlusOne(ctx context.Context, todayDate string) (int64, error)
 
 	UpsertKYB(ctx context.Context, userID, encKTP, encNPWP string, req domain.SubmitKYBRequest) (domain.KYBSubmissionResponse, error)
-	DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error)
+	DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat string, defaultLat, defaultLng float64, defaultPinHash string) (domain.UserProfile, error)
 	ListMitraVenues(ctx context.Context, ownerID, todayDate string) ([]domain.MitraVenueDTO, error)
 	UpdateMitraVenue(ctx context.Context, ownerID, venueID, todayDate string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error)
+	GetMitraVenueImageURL(ctx context.Context, ownerID, venueID string) (string, error)
+	UpdateMitraVenueImage(ctx context.Context, ownerID, venueID, todayDate, gambarURL string) (domain.MitraVenueDTO, error)
 	CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error)
 	UpdateMitraTicket(ctx context.Context, ownerID, ticketID string, req domain.UpdateTicketRequest) (domain.TicketProduct, error)
 	ListMitraStaffs(ctx context.Context, ownerID string) ([]domain.MitraStaffDTO, error)
@@ -294,7 +296,7 @@ func (r *PgxOperationsRepository) UpsertKYB(ctx context.Context, userID, encKTP,
 	return res, nil
 }
 
-func (r *PgxOperationsRepository) DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error) {
+func (r *PgxOperationsRepository) DemoApproveKYBTx(ctx context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat string, defaultLat, defaultLng float64, defaultPinHash string) (domain.UserProfile, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return domain.UserProfile{}, fmt.Errorf("begin demo approve kyb tx: %w", err)
@@ -368,11 +370,11 @@ func (r *PgxOperationsRepository) DemoApproveKYBTx(ctx context.Context, userID, 
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO venues (
 				owner_id, legality_id, venue_code, name, kota_kode, city, lokasi, address,
-				kategori, harga_mulai, is_published, approved_at
+				latitude, longitude, kategori, harga_mulai, is_published, approved_at
 			)
-			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, 'alam_geopark', 50000, TRUE, NOW())
+			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, 'alam_geopark', 50000, TRUE, NOW())
 			RETURNING id::text
-		`, userID, legalityID, venueCode, venueName, kotaKode, city, lokasi, alamat).Scan(&newVenueID); err != nil {
+		`, userID, legalityID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultLat, defaultLng).Scan(&newVenueID); err != nil {
 			return domain.UserProfile{}, fmt.Errorf("insert default mitra venue: %w", err)
 		}
 		ownedVenueIDs = append(ownedVenueIDs, newVenueID)
@@ -533,6 +535,11 @@ func (r *PgxOperationsRepository) UpdateMitraVenue(ctx context.Context, ownerID,
 			jam_buka = $5,
 			description = $6,
 			fasilitas = $7,
+			kota_kode = COALESCE($8, kota_kode),
+			city = COALESCE($9, city),
+			lokasi = COALESCE($10, lokasi),
+			latitude = COALESCE($11, latitude),
+			longitude = COALESCE($12, longitude),
 			updated_at = NOW()
 		WHERE id = $1::uuid AND owner_id = $2::uuid
 		RETURNING
@@ -540,7 +547,7 @@ func (r *PgxOperationsRepository) UpdateMitraVenue(ctx context.Context, ownerID,
 			description, kategori::text, harga_mulai::bigint, rating::float8,
 			jumlah_ulasan, gambar_url, gambar_alt, fasilitas, latitude::float8,
 			longitude::float8, is_published
-	`, venueID, ownerID, req.Nama, req.Alamat, req.JamBuka, req.Deskripsi, req.Fasilitas)
+	`, venueID, ownerID, req.Nama, req.Alamat, req.JamBuka, req.Deskripsi, req.Fasilitas, req.KotaKode, req.City, req.Lokasi, req.Latitude, req.Longitude)
 
 	v, err := scanMitraVenue(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -548,6 +555,53 @@ func (r *PgxOperationsRepository) UpdateMitraVenue(ctx context.Context, ownerID,
 	}
 	if err != nil {
 		return domain.MitraVenueDTO{}, fmt.Errorf("update mitra venue: %w", err)
+	}
+
+	tickets, err := r.listMitraVenueTickets(ctx, v.ID, todayDate)
+	if err != nil {
+		return domain.MitraVenueDTO{}, err
+	}
+	v.Tickets = tickets
+	return v, nil
+}
+
+func (r *PgxOperationsRepository) GetMitraVenueImageURL(ctx context.Context, ownerID, venueID string) (string, error) {
+	var gambarURL string
+	err := r.pool.QueryRow(ctx, `
+		SELECT gambar_url
+		FROM venues
+		WHERE id = $1::uuid AND owner_id = $2::uuid
+	`, venueID, ownerID).Scan(&gambarURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get mitra venue image url: %w", err)
+	}
+	return gambarURL, nil
+}
+
+func (r *PgxOperationsRepository) UpdateMitraVenueImage(ctx context.Context, ownerID, venueID, todayDate, gambarURL string) (domain.MitraVenueDTO, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE venues
+		SET
+			gambar_url = $3,
+			gambar_alt = CASE WHEN COALESCE(gambar_alt, '') = '' THEN name ELSE gambar_alt END,
+			updated_at = NOW()
+		WHERE id = $1::uuid AND owner_id = $2::uuid
+		RETURNING
+			id::text, venue_code, name, kota_kode, lokasi, address, jam_buka,
+			description, kategori::text, harga_mulai::bigint, rating::float8,
+			jumlah_ulasan, gambar_url, gambar_alt, fasilitas, latitude::float8,
+			longitude::float8, is_published
+	`, venueID, ownerID, gambarURL)
+
+	v, err := scanMitraVenue(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.MitraVenueDTO{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.MitraVenueDTO{}, fmt.Errorf("update mitra venue image: %w", err)
 	}
 
 	tickets, err := r.listMitraVenueTickets(ctx, v.ID, todayDate)

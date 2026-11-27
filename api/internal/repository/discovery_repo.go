@@ -107,6 +107,9 @@ func (r *PgxDiscoveryRepository) SearchVenues(ctx context.Context, filter domain
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan venue summary: %w", err)
 		}
+		if v.Lat != nil && v.Lng != nil {
+			v.Koordinat = &domain.GeoPoint{Lat: *v.Lat, Lng: *v.Lng}
+		}
 		venues = append(venues, v)
 	}
 
