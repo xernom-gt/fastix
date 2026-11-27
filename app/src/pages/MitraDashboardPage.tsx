@@ -13,6 +13,7 @@ import {
   apiFetchMitraVenues,
   apiUpdateMitraStaff,
   apiUpdateMitraTicket,
+  apiUpdateMitraVenue,
   DISBURSEMENT_BANK_ADMIN_FEE,
   getVerifiedBankAccount,
   loadBalanceMutations,
@@ -40,6 +41,33 @@ function getVenueTimezone(venue: Destinasi): 'WIB' | 'WITA' {
     return 'WITA';
   }
   return 'WIB';
+}
+
+function mergeApiVenueToDestinasi(av: MitraVenueDTO, fallback?: Destinasi): Destinasi {
+  const venueTickets = av.tickets ?? fallback?.tickets ?? [];
+  const minTicketPrice =
+    venueTickets.length > 0 ? Math.min(...venueTickets.map((t) => t.price)) : 0;
+
+  return {
+    id: av.id,
+    venueCode: av.venueCode,
+    nama: av.nama || fallback?.nama || 'Destinasi Wisata',
+    kotaKode: av.kotaKode || fallback?.kotaKode || 'yogyakarta',
+    lokasi: av.lokasi ?? fallback?.lokasi ?? '',
+    alamat: av.alamat ?? fallback?.alamat ?? '',
+    jamBuka: av.jamBuka ?? fallback?.jamBuka ?? '08.00 - 17.00 WIB',
+    deskripsi: av.deskripsi ?? fallback?.deskripsi ?? '',
+    kategori: av.kategori ?? fallback?.kategori ?? 'alam_geopark',
+    hargaMulai: av.hargaMulai ?? fallback?.hargaMulai ?? minTicketPrice,
+    rating: av.rating ?? fallback?.rating ?? 0,
+    jumlahUlasan: av.jumlahUlasan ?? fallback?.jumlahUlasan ?? 0,
+    gambarUrl: av.gambarUrl ?? fallback?.gambarUrl ?? '',
+    gambarAlt: av.gambarAlt ?? fallback?.gambarAlt ?? av.nama,
+    fasilitas: av.fasilitas ?? fallback?.fasilitas ?? [],
+    tickets: venueTickets,
+    koordinat: av.koordinat ?? fallback?.koordinat ?? { lat: 0, lng: 0 },
+    isPublished: av.isPublished,
+  };
 }
 
 function formatShortDateTime(iso: string): string {
@@ -90,14 +118,14 @@ export default function MitraDashboardPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const ownedVenues = useMemo(() => {
+    if (apiVenues.length > 0) {
+      return apiVenues.map((av) => {
+        const fallback = venues.find((v) => v.id === av.id || v.venueCode === av.venueCode);
+        return mergeApiVenueToDestinasi(av, fallback);
+      });
+    }
     const byUser = venues.filter((v) => user?.ownedVenueIds?.includes(v.id));
     if (byUser.length > 0) return byUser;
-    if (apiVenues.length > 0) {
-      const fromApi = venues.filter((v) =>
-        apiVenues.some((av) => av.id === v.id || av.venueCode === v.venueCode),
-      );
-      if (fromApi.length > 0) return fromApi;
-    }
     return venues.slice(0, 1);
   }, [venues, user?.ownedVenueIds, apiVenues]);
 
@@ -160,17 +188,14 @@ export default function MitraDashboardPage() {
 
         if (venuesRes.status === 'fulfilled' && venuesRes.value.length > 0) {
           setApiVenues(venuesRes.value);
-          updateVenues(
-            venues.map((v) => {
-              const matched = venuesRes.value.find(
-                (av) => av.id === v.id || av.venueCode === v.venueCode,
-              );
-              if (matched && matched.tickets) {
-                return { ...v, tickets: matched.tickets };
-              }
-              return v;
-            }),
+          const mergedFromApi = venuesRes.value.map((av) => {
+            const fallback = venues.find((v) => v.id === av.id || v.venueCode === av.venueCode);
+            return mergeApiVenueToDestinasi(av, fallback);
+          });
+          const remainingVenues = venues.filter(
+            (v) => !venuesRes.value.some((av) => av.id === v.id || av.venueCode === v.venueCode),
           );
+          updateVenues([...mergedFromApi, ...remainingVenues]);
         }
 
         if (staffsRes.status === 'fulfilled') {
@@ -209,6 +234,16 @@ export default function MitraDashboardPage() {
     setProfileHours(activeVenue.jamBuka);
     setProfileDesc(activeVenue.deskripsi);
     setProfileFacilities(activeVenue.fasilitas);
+  }, [
+    activeVenue?.id,
+    activeVenue?.nama,
+    activeVenue?.alamat,
+    activeVenue?.jamBuka,
+    activeVenue?.deskripsi,
+    activeVenue?.fasilitas,
+  ]);
+
+  useEffect(() => {
     setNewFacility('');
     setProfileFeedback(null);
     setPayoutFeedback(null);
@@ -236,14 +271,20 @@ export default function MitraDashboardPage() {
         createdAt: m.createdAt,
       }));
 
-      let grossRevenue = 0;
-      let platformFee = 0;
+      let fallbackGrossRevenue = 0;
       for (const m of ledgerRows) {
         if (m.amount > 0) {
-          grossRevenue += m.amount;
+          fallbackGrossRevenue += m.amount;
         }
       }
-      grossRevenue += holdingUncheckedBalance;
+      fallbackGrossRevenue += holdingUncheckedBalance;
+
+      const grossRevenue =
+        typeof apiFinance.grossRevenue === 'number'
+          ? apiFinance.grossRevenue
+          : fallbackGrossRevenue;
+      const platformFee =
+        typeof apiFinance.platformFee === 'number' ? apiFinance.platformFee : 0;
 
       return {
         grossRevenue,
@@ -695,7 +736,7 @@ export default function MitraDashboardPage() {
     setProfileFacilities(profileFacilities.filter((f) => f !== facilityToRemove));
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !profileName.trim() ||
@@ -710,24 +751,51 @@ export default function MitraDashboardPage() {
       return;
     }
 
-    const next = venues.map((v) =>
-      v.id === activeVenue.id
-        ? {
-            ...v,
-            nama: profileName.trim(),
-            alamat: profileAddress.trim(),
-            jamBuka: profileHours.trim(),
-            deskripsi: profileDesc.trim(),
-            fasilitas: profileFacilities,
-          }
-        : v,
-    );
+    const payload = {
+      nama: profileName.trim(),
+      alamat: profileAddress.trim(),
+      jamBuka: profileHours.trim(),
+      deskripsi: profileDesc.trim(),
+      fasilitas: profileFacilities,
+    };
 
-    updateVenues(next);
-    setProfileFeedback({
-      type: 'success',
-      message: 'Profil destinasi berhasil disimpan dan langsung sinkron ke katalog wisatawan.',
-    });
+    setIsSubmitting(true);
+    setProfileFeedback(null);
+
+    try {
+      const updatedDto = await apiUpdateMitraVenue(activeVenue.id, payload);
+
+      setApiVenues((prev) => {
+        const exists = prev.some((av) => av.id === updatedDto.id);
+        if (exists) {
+          return prev.map((av) => (av.id === updatedDto.id ? { ...av, ...updatedDto } : av));
+        }
+        return [...prev, updatedDto];
+      });
+
+      const mergedUpdated = mergeApiVenueToDestinasi(updatedDto, activeVenue);
+      const existsInVenues = venues.some((v) => v.id === activeVenue.id);
+      const nextVenues = existsInVenues
+        ? venues.map((v) => (v.id === activeVenue.id ? mergedUpdated : v))
+        : [...venues, mergedUpdated];
+      updateVenues(nextVenues);
+
+      setProfileFeedback({
+        type: 'success',
+        message: 'Profil destinasi berhasil disimpan ke server dan langsung sinkron ke katalog wisatawan.',
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Gagal menyimpan profil destinasi ke server. Silakan coba lagi.';
+      setProfileFeedback({
+        type: 'error',
+        message,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const venueTimezone = getVenueTimezone(activeVenue);
@@ -1233,9 +1301,10 @@ export default function MitraDashboardPage() {
           <div className="pt-2 flex justify-end">
             <button
               type="submit"
-              className="min-h-[44px] px-6 h-11 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+              disabled={isSubmitting}
+              className="min-h-[44px] px-6 h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors"
             >
-              Simpan Profil Destinasi
+              {isSubmitting ? 'Menyimpan...' : 'Simpan Profil Destinasi'}
             </button>
           </div>
         </form>
