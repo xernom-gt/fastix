@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/mail"
+	"net/smtp"
 	"net/url"
 	"strings"
 	"time"
@@ -72,12 +74,93 @@ func (v *HTTPGoogleTokenVerifier) VerifyIDToken(ctx context.Context, idToken str
 	return claims, nil
 }
 
+// OTPEmailSender delivers registration verification OTP codes to users.
+type OTPEmailSender interface {
+	SendRegistrationOTP(ctx context.Context, toEmail, fullName, otpCode string) error
+}
+
+// SMTPOTPEmailSender sends OTP emails over SMTP (e.g., Gmail SMTP with STARTTLS on port 587).
+type SMTPOTPEmailSender struct {
+	host string
+	port string
+	user string
+	pass string
+	from string
+}
+
+// NewSMTPOTPEmailSender creates an SMTPOTPEmailSender and normalizes Google App Password whitespace.
+func NewSMTPOTPEmailSender(host, port, user, pass, from string) *SMTPOTPEmailSender {
+	return &SMTPOTPEmailSender{
+		host: strings.TrimSpace(host),
+		port: strings.TrimSpace(port),
+		user: strings.TrimSpace(user),
+		pass: strings.ReplaceAll(strings.TrimSpace(pass), " ", ""),
+		from: strings.TrimSpace(from),
+	}
+}
+
+// IsConfigured reports whether all required SMTP settings are present.
+func (s *SMTPOTPEmailSender) IsConfigured() bool {
+	return s.user != "" && s.pass != "" && s.host != "" && s.port != ""
+}
+
+// SendRegistrationOTP formats and sends a 6-digit registration OTP email via SMTP.
+func (s *SMTPOTPEmailSender) SendRegistrationOTP(ctx context.Context, toEmail, fullName, otpCode string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.IsConfigured() {
+		return fmt.Errorf("smtp is not configured")
+	}
+
+	fromHeader := s.from
+	if fromHeader == "" {
+		fromHeader = s.user
+	}
+	fromAddr := s.user
+	if parsed, err := mail.ParseAddress(fromHeader); err == nil && parsed.Address != "" {
+		fromAddr = parsed.Address
+	}
+
+	recipientName := strings.TrimSpace(fullName)
+	if recipientName == "" {
+		recipientName = "Pengguna Fastix"
+	}
+
+	body := fmt.Sprintf(
+		"Halo %s,\r\n\r\n"+
+			"Kode verifikasi OTP pendaftaran Fastix Anda adalah: %s\r\n\r\n"+
+			"Kode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapa pun.\r\n\r\n"+
+			"Terima kasih,\r\nTim Fastix",
+		recipientName,
+		otpCode,
+	)
+
+	msg := strings.Join([]string{
+		"From: " + fromHeader,
+		"To: " + toEmail,
+		"Subject: Kode Verifikasi OTP Fastix",
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"",
+		body,
+	}, "\r\n")
+
+	auth := smtp.PlainAuth("", s.user, s.pass, s.host)
+	addr := net.JoinHostPort(s.host, s.port)
+	if err := smtp.SendMail(addr, auth, fromAddr, []string{toEmail}, []byte(msg)); err != nil {
+		return fmt.Errorf("send otp email via smtp: %w", err)
+	}
+	return nil
+}
+
 // AuthService handles registration OTP, credential login, Google OAuth, profile updates, and gate PIN auth.
 type AuthService struct {
 	repo           repository.AuthRepository
 	jwtSecret      string
 	googleClientID string
 	googleVerifier GoogleTokenVerifier
+	emailSender    OTPEmailSender
 	isDev          bool
 }
 
@@ -93,6 +176,12 @@ func NewAuthService(repo repository.AuthRepository, jwtSecret, appEnv, googleCli
 		googleVerifier: verifier,
 		isDev:          strings.EqualFold(appEnv, "development"),
 	}
+}
+
+// WithEmailSender attaches an OTPEmailSender to the AuthService.
+func (s *AuthService) WithEmailSender(sender OTPEmailSender) *AuthService {
+	s.emailSender = sender
+	return s
 }
 
 // Register validates registration input, hashes the password, and issues a 6-digit OTP.
@@ -146,6 +235,16 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	}
 	if err := s.repo.CreateRegistrationOTP(ctx, otpRecord); err != nil {
 		return domain.RegisterResult{}, err
+	}
+
+	if s.emailSender != nil {
+		if err := s.emailSender.SendRegistrationOTP(ctx, email, fullName, otpCode); err != nil {
+			if !s.isDev {
+				slog.Error("failed to send registration otp email", "email", email, "error", err)
+				return domain.RegisterResult{}, domain.NewAppError(nil, "EMAIL_SEND_FAILED", "Gagal mengirim kode OTP ke email. Silakan coba lagi.", nil)
+			}
+			slog.Warn("failed to send registration otp email in dev mode", "email", email, "error", err)
+		}
 	}
 
 	slog.Info("registration otp issued", "email", email)
