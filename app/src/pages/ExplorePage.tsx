@@ -11,6 +11,7 @@ import {
   type KategoriWisata,
 } from '@pariwisloka/shared';
 import { VenueCard, type VenueEntry } from '../components/VenueCard';
+import { VenueImage } from '../components/VenueImage';
 import { useBookings } from '../store/bookingStore';
 
 const KATEGORI_ICONS: Record<KategoriWisata | 'all', string> = {
@@ -209,11 +210,13 @@ export default function ExplorePage() {
                   }}
                 >
                   {featuredSlides.map((s) => (
-                    <img
+                    <VenueImage
                       key={`p2-${s.id}`}
                       src={s.gambarUrl}
                       alt=""
-                      aria-hidden="true"
+                      ariaHidden
+                      tone="dark"
+                      compact
                       className="w-full h-full object-cover shrink-0"
                     />
                   ))}
@@ -231,11 +234,13 @@ export default function ExplorePage() {
                   }}
                 >
                   {featuredSlides.map((s) => (
-                    <img
+                    <VenueImage
                       key={`p1-${s.id}`}
                       src={s.gambarUrl}
                       alt=""
-                      aria-hidden="true"
+                      ariaHidden
+                      tone="dark"
+                      compact
                       className="w-full h-full object-cover shrink-0"
                     />
                   ))}
@@ -254,12 +259,14 @@ export default function ExplorePage() {
                 >
                   {featuredSlides.map((slide, idx) => (
                     <div key={slide.id} className="relative w-full h-full shrink-0">
-                      <img
+                      <VenueImage
                         src={slide.gambarUrl}
-                        alt={slide.gambarAlt}
+                        alt={slide.gambarAlt || slide.nama}
                         width={960}
                         height={360}
                         fetchPriority={idx === 0 ? 'high' : 'auto'}
+                        tone="dark"
+                        compact
                         className="w-full h-full object-cover"
                       />
                       <div className="absolute inset-0 bg-gradient-to-r from-[#090D16]/95 via-[#111827]/75 to-transparent" />
@@ -335,11 +342,13 @@ export default function ExplorePage() {
                   }}
                 >
                   {featuredSlides.map((s) => (
-                    <img
+                    <VenueImage
                       key={`n1-${s.id}`}
                       src={s.gambarUrl}
                       alt=""
-                      aria-hidden="true"
+                      ariaHidden
+                      tone="dark"
+                      compact
                       className="w-full h-full object-cover shrink-0"
                     />
                   ))}
@@ -357,11 +366,13 @@ export default function ExplorePage() {
                   }}
                 >
                   {featuredSlides.map((s) => (
-                    <img
+                    <VenueImage
                       key={`n2-${s.id}`}
                       src={s.gambarUrl}
                       alt=""
-                      aria-hidden="true"
+                      ariaHidden
+                      tone="dark"
+                      compact
                       className="w-full h-full object-cover shrink-0"
                     />
                   ))}
@@ -443,10 +454,12 @@ export default function ExplorePage() {
                 to={`/destinasi/${larisManis.left.id}?tanggal=${encodeURIComponent(tanggal)}`}
                 className="hidden lg:block relative h-64 rounded-2xl overflow-hidden group"
               >
-                <img
+                <VenueImage
                   src={larisManis.left.gambarUrl}
-                  alt={larisManis.left.gambarAlt}
+                  alt={larisManis.left.gambarAlt || larisManis.left.nama}
                   loading="lazy"
+                  tone="dark"
+                  compact
                   className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />
@@ -460,10 +473,12 @@ export default function ExplorePage() {
               to={`/destinasi/${larisManis.center.id}?tanggal=${encodeURIComponent(tanggal)}`}
               className="lg:col-span-2 relative h-64 rounded-2xl overflow-hidden group shadow-md"
             >
-              <img
+              <VenueImage
                 src={larisManis.center.gambarUrl}
-                alt={larisManis.center.gambarAlt}
+                alt={larisManis.center.gambarAlt || larisManis.center.nama}
                 loading="lazy"
+                tone="dark"
+                compact
                 className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
@@ -482,10 +497,12 @@ export default function ExplorePage() {
                 to={`/destinasi/${larisManis.right.id}?tanggal=${encodeURIComponent(tanggal)}`}
                 className="hidden lg:block relative h-64 rounded-2xl overflow-hidden group"
               >
-                <img
+                <VenueImage
                   src={larisManis.right.gambarUrl}
-                  alt={larisManis.right.gambarAlt}
+                  alt={larisManis.right.gambarAlt || larisManis.right.nama}
                   loading="lazy"
+                  tone="dark"
+                  compact
                   className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />

@@ -4,6 +4,16 @@ const RAW_BASE_URL =
 export const API_BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
 export const AUTH_TOKEN_STORAGE_KEY = 'fastix_auth_token_v1';
 
+export function resolveMediaUrl(url: string | undefined | null): string {
+  const trimmed = url?.trim() ?? '';
+  if (!trimmed) return '';
+  if (/^(https?:\/\/|data:|blob:)/i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/') && /^https?:\/\//i.test(API_BASE_URL)) {
+    return `${new URL(API_BASE_URL).origin}${trimmed}`;
+  }
+  return trimmed;
+}
+
 export interface ApiErrorBody {
   code?: string;
   message?: string;

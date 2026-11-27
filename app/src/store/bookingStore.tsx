@@ -41,6 +41,7 @@ interface VenueSummaryDTO {
   jumlahUlasan: number;
   gambarUrl: string;
   gambarAlt: string;
+  koordinat?: { lat: number; lng: number };
   distanceMeters?: number;
   remainingQuota: number;
   isPublished: boolean;
@@ -269,7 +270,7 @@ function mergeVenueSummary(summary: VenueSummaryDTO, existing?: Destinasi): Dest
         usedQuotaPending: 0,
       },
     ],
-    koordinat: fallback?.koordinat ?? { lat: -7.7956, lng: 110.3695 },
+    koordinat: summary.koordinat ?? fallback?.koordinat ?? { lat: -7.7956, lng: 110.3695 },
     isPublished: summary.isPublished,
   };
 }
