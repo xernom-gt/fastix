@@ -80,6 +80,8 @@ export default function GateScanPage() {
   const [manualInput, setManualInput] = useState('');
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'REDEEMED'>('ALL');
+  const [mobileTab, setMobileTab] = useState<'scan' | 'list'>('scan');
+  const [searchQuery, setSearchQuery] = useState('');
   const [apiTickets, setApiTickets] = useState<ETicket[] | null>(null);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
   const [isRedeeming, setIsRedeeming] = useState(false);
@@ -223,9 +225,16 @@ export default function GateScanPage() {
   }, [apiTickets, tickets, staff]);
 
   const filteredTickets = useMemo(() => {
-    if (statusFilter === 'ALL') return venueTickets;
-    return venueTickets.filter((t) => t.status === statusFilter);
-  }, [venueTickets, statusFilter]);
+    const query = searchQuery.trim().toLowerCase();
+    return venueTickets.filter((t) => {
+      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      if (!query) return true;
+      return (
+        t.ticketCode.toLowerCase().includes(query) ||
+        t.holderName.toLowerCase().includes(query)
+      );
+    });
+  }, [venueTickets, statusFilter, searchQuery]);
 
   if (!staff || !gateToken) {
     return <Navigate to="/gate/login" replace />;
@@ -527,7 +536,7 @@ export default function GateScanPage() {
             <button
               type="button"
               onClick={() => setIsOfflineMode((prev) => !prev)}
-              className={`min-h-[36px] px-3.5 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
+              className={`min-h-[44px] px-3.5 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
                 isOfflineMode
                   ? 'bg-amber-400 text-[#111827] border-amber-300'
                   : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30 hover:bg-emerald-500/30'
@@ -538,7 +547,7 @@ export default function GateScanPage() {
             <button
               type="button"
               onClick={handleLogout}
-              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors cursor-pointer"
+              className="min-h-[44px] px-3.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors cursor-pointer"
             >
               Keluar
             </button>
@@ -573,9 +582,45 @@ export default function GateScanPage() {
           </div>
         </div>
 
+        {/* Mobile Tab Switcher */}
+        <div
+          role="tablist"
+          aria-label="Navigasi area loket"
+          className="lg:hidden grid grid-cols-2 gap-1.5 rounded-2xl bg-white border border-gray-200 p-1.5"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === 'scan'}
+            onClick={() => setMobileTab('scan')}
+            className={`min-h-[44px] px-3 rounded-xl text-xs font-extrabold transition-colors cursor-pointer ${
+              mobileTab === 'scan'
+                ? 'bg-[#111827] text-white'
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            Pindai Tiket
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobileTab === 'list'}
+            onClick={() => setMobileTab('list')}
+            className={`min-h-[44px] px-3 rounded-xl text-xs font-extrabold transition-colors cursor-pointer ${
+              mobileTab === 'list'
+                ? 'bg-[#111827] text-white'
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            Daftar Tiket ({venueTickets.length})
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
           {/* Kolom Kiri: Kamera QR + Input Manual + Hasil Validasi */}
-          <div className="lg:col-span-7 min-w-0 space-y-4 sm:space-y-5">
+          <div
+            className={`${mobileTab === 'scan' ? 'block' : 'hidden'} lg:block lg:col-span-7 min-w-0 space-y-4 sm:space-y-5`}
+          >
             <section className="rounded-2xl bg-white border border-gray-200 p-4 sm:p-5 space-y-3 sm:space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h1 className="text-base font-extrabold text-[#111827]">
@@ -585,7 +630,7 @@ export default function GateScanPage() {
                   <button
                     type="button"
                     onClick={openFullscreenScanner}
-                    className="min-h-[40px] sm:min-h-[36px] px-3 py-1.5 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-xs font-bold text-[#111827] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-xs font-bold text-[#111827] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                       fullscreen
@@ -596,7 +641,7 @@ export default function GateScanPage() {
                     <button
                       type="button"
                       onClick={stopCamera}
-                      className="min-h-[40px] sm:min-h-[36px] px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs font-bold text-[#111827] transition-colors cursor-pointer"
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs font-bold text-[#111827] transition-colors cursor-pointer"
                     >
                       Matikan
                     </button>
@@ -604,7 +649,7 @@ export default function GateScanPage() {
                     <button
                       type="button"
                       onClick={() => void startCamera(true)}
-                      className="min-h-[40px] sm:min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                         videocam
@@ -623,7 +668,7 @@ export default function GateScanPage() {
                 className={
                   isFullscreenCamera
                     ? 'fixed inset-0 z-50 bg-[#090D16] text-white flex flex-col justify-between p-4 sm:p-6'
-                    : 'relative w-full h-32 sm:h-40 rounded-xl sm:rounded-2xl bg-[#090D16] overflow-hidden flex items-center justify-center'
+                    : 'relative w-full h-48 sm:h-56 rounded-xl sm:rounded-2xl bg-[#090D16] overflow-hidden flex items-center justify-center'
                 }
               >
                 <video
@@ -639,10 +684,12 @@ export default function GateScanPage() {
                 />
 
                 {isFullscreenCamera && (
-                  <div className="relative z-10 flex items-center justify-between gap-3">
+                  <div className="relative z-10 flex items-center justify-between gap-3 bg-black/70 backdrop-blur-md border border-white/15 rounded-2xl px-3.5 py-2.5">
                     <div className="min-w-0">
-                      <p className="text-sm font-extrabold truncate">{staff.venueName}</p>
-                      <p className="text-[11px] text-gray-300">
+                      <p className="text-sm font-extrabold text-white truncate">
+                        {staff.venueName}
+                      </p>
+                      <p className="text-[11px] text-gray-200 truncate">
                         {isOfflineMode ? 'Mode Offline' : 'Mode Online'} • {staff.name}
                       </p>
                     </div>
@@ -693,7 +740,7 @@ export default function GateScanPage() {
                         </div>
                       )}
                     </div>
-                    <p className="mt-5 text-xs font-semibold text-white/90 text-center">
+                    <p className="mt-5 text-xs font-semibold text-white text-center bg-black/65 backdrop-blur-sm px-3.5 py-1.5 rounded-full">
                       Arahkan QR e-ticket pengunjung ke dalam kotak bidik
                     </p>
                   </div>
@@ -741,7 +788,7 @@ export default function GateScanPage() {
                         <p className="text-xs text-white/90">{outcome.detail}</p>
                       </div>
                     )}
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 bg-black/70 backdrop-blur-md border border-white/15 rounded-2xl p-3">
                       <button
                         type="button"
                         onClick={switchToManualInput}
@@ -851,7 +898,7 @@ export default function GateScanPage() {
                     type="button"
                     disabled={isSyncing}
                     onClick={() => void handleSyncOfflineQueue()}
-                    className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className="min-h-[44px] px-4 py-2 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
                     {isSyncing ? 'Menyinkronkan...' : 'Sinkronkan'}
                   </button>
@@ -892,24 +939,44 @@ export default function GateScanPage() {
           </div>
 
           {/* Kolom Kanan: Daftar Tiket Harian */}
-          <section className="lg:col-span-5 min-w-0 rounded-2xl bg-white border border-gray-200 p-4 sm:p-5 space-y-4 h-fit">
+          <section
+            className={`${mobileTab === 'list' ? 'block' : 'hidden'} lg:block lg:col-span-5 min-w-0 rounded-2xl bg-white border border-gray-200 p-4 sm:p-5 space-y-3.5 h-fit`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-extrabold text-[#111827]">Daftar Tiket Hari Ini</h2>
-                {isLoadingTickets && (
-                  <span className="text-[11px] font-semibold text-gray-500">Memuat...</span>
-                )}
+              <h2 className="text-sm font-extrabold text-[#111827]">Daftar Tiket Hari Ini</h2>
+              {isLoadingTickets && (
+                <span className="text-[11px] font-semibold text-gray-500">Memuat...</span>
+              )}
+            </div>
+
+            <div className="space-y-2.5">
+              <div className="relative">
+                <span
+                  className="material-symbols-outlined text-[18px] text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  aria-hidden="true"
+                >
+                  search
+                </span>
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Cari kode PWL-TIX atau nama pengunjung..."
+                  aria-label="Cari kode tiket atau nama pengunjung"
+                  className="w-full min-h-[44px] pl-9 pr-3.5 rounded-xl border border-gray-300 text-xs sm:text-sm text-[#111827] placeholder:text-gray-500 focus:border-[#111827] focus:outline-none"
+                />
               </div>
-              <div className="flex items-center gap-1">
+
+              <div className="grid grid-cols-3 gap-1.5">
                 {(['ALL', 'VALID', 'REDEEMED'] as const).map((tab) => (
                   <button
                     key={tab}
                     type="button"
                     onClick={() => setStatusFilter(tab)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                    className={`min-h-[44px] px-2.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
                       statusFilter === tab
                         ? 'bg-[#111827] text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
                     {tab === 'ALL' ? 'Semua' : tab}
@@ -919,26 +986,34 @@ export default function GateScanPage() {
             </div>
 
             <div className="divide-y divide-gray-100">
-              {filteredTickets.map((t) => (
-                <div key={t.id} className="py-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="font-mono text-xs font-extrabold text-[#111827]">
-                      {t.ticketCode}
-                    </p>
-                    <p className="text-xs font-semibold text-gray-700 truncate">{t.holderName}</p>
-                    <p className="text-[11px] text-gray-500 truncate">{t.ticketTitle}</p>
+              {filteredTickets.length === 0 ? (
+                <p className="py-6 text-center text-xs font-medium text-gray-500">
+                  {venueTickets.length === 0
+                    ? 'Belum ada tiket untuk hari ini.'
+                    : 'Tidak ada tiket yang sesuai pencarian atau filter.'}
+                </p>
+              ) : (
+                filteredTickets.map((t) => (
+                  <div key={t.id} className="py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="font-mono text-xs font-extrabold text-[#111827]">
+                        {t.ticketCode}
+                      </p>
+                      <p className="text-xs font-semibold text-gray-700 truncate">{t.holderName}</p>
+                      <p className="text-[11px] text-gray-500 truncate">{t.ticketTitle}</p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold shrink-0 ${
+                        t.status === 'VALID'
+                          ? 'bg-[#111827] text-white'
+                          : 'bg-gray-200 text-gray-700'
+                      }`}
+                    >
+                      {t.status}
+                    </span>
                   </div>
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold shrink-0 ${
-                      t.status === 'VALID'
-                        ? 'bg-[#111827] text-white'
-                        : 'bg-gray-200 text-gray-700'
-                    }`}
-                  >
-                    {t.status}
-                  </span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </section>
         </div>
