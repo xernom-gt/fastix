@@ -69,7 +69,7 @@ func NewHTTPMidtransSnapClient(midtransEnv, serverKey string) *HTTPMidtransSnapC
 func (c *HTTPMidtransSnapClient) CreateTransaction(ctx context.Context, orderID string, grossAmount int64, customer domain.CustomerContact) (domain.SnapCreateResponse, error) {
 	body := map[string]any{
 		"transaction_details": map[string]any{
-			"order_id":     orderID,
+			"order_id":     toMidtransOrderID(orderID),
 			"gross_amount": grossAmount,
 		},
 		"enabled_payments": []string{"qris", "gopay", "shopeepay", "bca_va", "bni_va", "bri_va"},
@@ -124,7 +124,7 @@ func (c *HTTPMidtransSnapClient) ChargeQRIS(ctx context.Context, orderID string,
 	body := map[string]any{
 		"payment_type": "qris",
 		"transaction_details": map[string]any{
-			"order_id":     orderID,
+			"order_id":     toMidtransOrderID(orderID),
 			"gross_amount": grossAmount,
 		},
 		"customer_details": map[string]any{
@@ -183,7 +183,7 @@ func (c *HTTPMidtransSnapClient) CheckOrderStatus(ctx context.Context, orderID s
 		return MidtransOrderStatus{}, fmt.Errorf("midtrans core api client not configured")
 	}
 
-	statusURL := fmt.Sprintf("%s/v2/%s/status", strings.TrimRight(c.coreBaseURL, "/"), url.PathEscape(orderID))
+	statusURL := fmt.Sprintf("%s/v2/%s/status", strings.TrimRight(c.coreBaseURL, "/"), url.PathEscape(toMidtransOrderID(orderID)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
 	if err != nil {
 		return MidtransOrderStatus{}, fmt.Errorf("build core status request: %w", err)
@@ -209,22 +209,23 @@ func (c *HTTPMidtransSnapClient) CheckOrderStatus(ctx context.Context, orderID s
 	return statusResp, nil
 }
 
-// CheckConnection verifies whether the Midtrans Snap endpoint is reachable and accepts the configured server key.
+// CheckConnection verifies whether the Midtrans Core API is reachable and accepts the configured server key
+// using a lightweight GET status ping on a non-existent order ID (avoiding Snap validation emails).
 func (c *HTTPMidtransSnapClient) CheckConnection(ctx context.Context) bool {
-	if c == nil || c.client == nil || strings.TrimSpace(c.serverKey) == "" || strings.TrimSpace(c.endpoint) == "" {
+	if c == nil || c.client == nil || strings.TrimSpace(c.serverKey) == "" || strings.TrimSpace(c.coreBaseURL) == "" {
 		return false
 	}
 
 	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(checkCtx, http.MethodPost, c.endpoint, strings.NewReader("{}"))
+	pingURL := strings.TrimRight(c.coreBaseURL, "/") + "/v2/fastix-healthcheck-ping/status"
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, pingURL, nil)
 	if err != nil {
 		return false
 	}
 	authToken := base64.StdEncoding.EncodeToString([]byte(c.serverKey + ":"))
 	req.Header.Set("Authorization", "Basic "+authToken)
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -320,23 +321,11 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 		if contactErr != nil {
 			return domain.TransactionDTO{}, contactErr
 		}
-		var snapToken, snapRedirectURL string
-		snapResp, snapErr := s.snapClient.CreateTransaction(ctx, tx.InvoiceNumber, tx.TotalAmount, contact)
-		if snapErr != nil {
-			fmt.Printf("[MIDTRANS_NOTICE] Snap API returned error (%v). Using Midtrans Sandbox simulator fallback.\n", snapErr)
-			snapToken = fmt.Sprintf("sandbox-snap-%s", tx.InvoiceNumber)
-			snapRedirectURL = fmt.Sprintf("https://simulator.sandbox.midtrans.com/qris/index?order_id=%s&amount=%d", tx.InvoiceNumber, tx.TotalAmount)
-		} else {
-			snapToken = snapResp.Token
-			snapRedirectURL = snapResp.RedirectURL
-		}
-		if updateErr := s.repo.UpdateTransactionSnap(ctx, tx.ID, snapToken, snapRedirectURL); updateErr != nil {
-			return domain.TransactionDTO{}, updateErr
-		}
-		tx.SnapToken = snapToken
-		tx.SnapRedirectURL = snapRedirectURL
+		midtransOrderID := toMidtransOrderID(tx.InvoiceNumber)
+		snapRedirectURL := fmt.Sprintf("https://simulator.sandbox.midtrans.com/qris/index?order_id=%s&amount=%d", midtransOrderID, tx.TotalAmount)
 
-		if qrString, qrisErr := s.snapClient.ChargeQRIS(ctx, tx.InvoiceNumber, tx.TotalAmount, contact); qrisErr != nil {
+		qrString, qrisErr := s.snapClient.ChargeQRIS(ctx, tx.InvoiceNumber, tx.TotalAmount, contact)
+		if qrisErr != nil {
 			fmt.Printf("[MIDTRANS_NOTICE] Core API QRIS charge returned error (%v). Keeping default qr_string.\n", qrisErr)
 		} else if strings.TrimSpace(qrString) != "" {
 			if updateQRErr := s.repo.UpdateTransactionQRString(ctx, tx.ID, qrString); updateQRErr != nil {
@@ -344,6 +333,12 @@ func (s *BookingService) CreateBooking(ctx context.Context, customerID string, r
 			}
 			tx.QRString = qrString
 		}
+
+		if updateErr := s.repo.UpdateTransactionSnap(ctx, tx.ID, "", snapRedirectURL); updateErr != nil {
+			return domain.TransactionDTO{}, updateErr
+		}
+		tx.SnapToken = ""
+		tx.SnapRedirectURL = snapRedirectURL
 	}
 
 	return tx, nil
@@ -359,7 +354,7 @@ func (s *BookingService) GetBooking(ctx context.Context, invoiceID, customerID s
 	}
 
 	if tx.PaymentStatus == domain.PaymentStatusPending && s.snapClient != nil {
-		statusResp, statusErr := s.snapClient.CheckOrderStatus(ctx, tx.InvoiceNumber)
+		statusResp, statusErr := s.snapClient.CheckOrderStatus(ctx, toMidtransOrderID(tx.InvoiceNumber))
 		if statusErr == nil && isMidtransSettled(statusResp.TransactionStatus) {
 			gatewayRef := strings.TrimSpace(statusResp.TransactionID)
 			if gatewayRef == "" {
@@ -402,7 +397,7 @@ func (s *BookingService) HandleQRISWebhook(ctx context.Context, rawBody []byte, 
 		}
 	}
 
-	txID, err := s.repo.FindBookingIDByInvoice(ctx, invoiceNumber)
+	txID, err := s.repo.FindBookingIDByInvoice(ctx, fromMidtransOrderID(invoiceNumber))
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.TransactionDTO{}, domain.NewAppError(domain.ErrNotFound, "BOOKING_NOT_FOUND", "Invoice tidak ditemukan.", nil)
 	}
@@ -520,6 +515,18 @@ func VerifyMidtransSignature(orderID, statusCode, grossAmount, serverKey, signat
 
 func isMidtransSettled(txStatus string) bool {
 	return strings.EqualFold(txStatus, "settlement") || strings.EqualFold(txStatus, "capture")
+}
+
+func toMidtransOrderID(invoiceNumber string) string {
+	return strings.ReplaceAll(strings.TrimSpace(invoiceNumber), "/", "-")
+}
+
+func fromMidtransOrderID(orderID string) string {
+	trimmed := strings.TrimSpace(orderID)
+	if strings.HasPrefix(trimmed, "PWL-INV-") {
+		return strings.ReplaceAll(trimmed, "-", "/")
+	}
+	return trimmed
 }
 
 func (s *BookingService) verifySignatureHex(rawBody []byte, signatureHeader string) bool {
