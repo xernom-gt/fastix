@@ -17,7 +17,7 @@ export interface CustomerUser {
   ownedVenueIds?: string[];
 }
 
-interface BackendUserProfile {
+export interface BackendUserProfile {
   id: string;
   fullName: string;
   phoneNumber: string;
@@ -25,6 +25,8 @@ interface BackendUserProfile {
   role: string;
   ownedVenueIds?: string[];
 }
+
+export type AuthUserDTO = BackendUserProfile;
 
 interface AuthTokenResponse {
   accessToken: string;
@@ -49,6 +51,7 @@ interface AuthContextValue {
   }) => Promise<RegisterOtpInfo>;
   verifyRegistrationOtp: (email: string, otpCode: string) => Promise<CustomerUser>;
   updateProfile: (data: { fullName: string }) => Promise<CustomerUser | undefined>;
+  applyAuthenticatedSession: (accessToken: string, profile: BackendUserProfile) => CustomerUser;
   upgradeToOwner: (venueIds?: string[]) => void;
   logout: () => void;
 }
@@ -118,23 +121,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  const applyAuthenticatedSession = (
+    accessToken: string,
+    profile: BackendUserProfile,
+  ): CustomerUser => {
+    setAuthToken(accessToken);
+    const mapped = mapBackendUser(profile);
+    saveUser(mapped);
+    return mapped;
+  };
+
   const loginWithCredentials = async (email: string, password: string): Promise<CustomerUser> => {
     const { data } = await apiPost<AuthTokenResponse>('/auth/login', {
       email: email.trim(),
       password,
     });
-    setAuthToken(data.accessToken);
-    const mapped = mapBackendUser(data.user);
-    saveUser(mapped);
-    return mapped;
+    return applyAuthenticatedSession(data.accessToken, data.user);
   };
 
   const loginWithGoogle = async (idToken: string): Promise<CustomerUser> => {
     const { data } = await apiPost<AuthTokenResponse>('/auth/google', { idToken });
-    setAuthToken(data.accessToken);
-    const mapped = mapBackendUser(data.user);
-    saveUser(mapped);
-    return mapped;
+    return applyAuthenticatedSession(data.accessToken, data.user);
   };
 
   const requestRegistration = async (data: {
@@ -157,10 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: email.trim(),
       otpCode: otpCode.trim(),
     });
-    setAuthToken(data.accessToken);
-    const mapped = mapBackendUser(data.user);
-    saveUser(mapped);
-    return mapped;
+    return applyAuthenticatedSession(data.accessToken, data.user);
   };
 
   const updateProfile = async (data: { fullName: string }): Promise<CustomerUser | undefined> => {
@@ -208,6 +212,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         requestRegistration,
         verifyRegistrationOtp,
         updateProfile,
+        applyAuthenticatedSession,
         upgradeToOwner,
         logout,
       }}
