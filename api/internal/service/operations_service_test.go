@@ -1,9 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +22,7 @@ type stubOpsRepo struct {
 	pendingAdded   int64
 	venueOwnerID   string
 	venueID        string
+	venueImageURL  string
 	grossRevenue   int64
 	platformFee    int64
 	updatedRequest *domain.UpdateMitraVenueRequest
@@ -27,6 +32,8 @@ type stubOpsRepo struct {
 	demoCity       string
 	demoLokasi     string
 	demoAlamat     string
+	demoLat        float64
+	demoLng        float64
 	demoPinHash    string
 }
 
@@ -57,13 +64,15 @@ func (r *stubOpsRepo) UpsertKYB(_ context.Context, _, _, _ string, _ domain.Subm
 	return domain.KYBSubmissionResponse{ID: "kyb-1", VerificationStatus: "PENDING"}, nil
 }
 
-func (r *stubOpsRepo) DemoApproveKYBTx(_ context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, defaultPinHash string) (domain.UserProfile, error) {
+func (r *stubOpsRepo) DemoApproveKYBTx(_ context.Context, userID, venueCode, venueName, kotaKode, city, lokasi, alamat string, defaultLat, defaultLng float64, defaultPinHash string) (domain.UserProfile, error) {
 	r.demoVenueCode = venueCode
 	r.demoVenueName = venueName
 	r.demoKotaKode = kotaKode
 	r.demoCity = city
 	r.demoLokasi = lokasi
 	r.demoAlamat = alamat
+	r.demoLat = defaultLat
+	r.demoLng = defaultLng
 	r.demoPinHash = defaultPinHash
 	return domain.UserProfile{
 		ID:            userID,
@@ -94,6 +103,27 @@ func (r *stubOpsRepo) UpdateMitraVenue(_ context.Context, ownerID, venueID, _ st
 		JamBuka:     req.JamBuka,
 		Deskripsi:   req.Deskripsi,
 		Fasilitas:   req.Fasilitas,
+		IsPublished: true,
+		Tickets:     []domain.TicketProduct{},
+	}, nil
+}
+
+func (r *stubOpsRepo) GetMitraVenueImageURL(_ context.Context, ownerID, venueID string) (string, error) {
+	if r.venueID != "" && (venueID != r.venueID || ownerID != r.venueOwnerID) {
+		return "", domain.ErrNotFound
+	}
+	return r.venueImageURL, nil
+}
+
+func (r *stubOpsRepo) UpdateMitraVenueImage(_ context.Context, ownerID, venueID, _, gambarURL string) (domain.MitraVenueDTO, error) {
+	if r.venueID != "" && (venueID != r.venueID || ownerID != r.venueOwnerID) {
+		return domain.MitraVenueDTO{}, domain.ErrNotFound
+	}
+	r.venueImageURL = gambarURL
+	return domain.MitraVenueDTO{
+		ID:          venueID,
+		VenueCode:   "V-TEST",
+		GambarURL:   gambarURL,
 		IsPublished: true,
 		Tickets:     []domain.TicketProduct{},
 	}, nil
@@ -329,6 +359,209 @@ func TestDemoApproveKYB(t *testing.T) {
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(repo.demoPinHash), []byte("123456")); err != nil {
 			t.Fatalf("expected default staff PIN hash for 123456: %v", err)
+		}
+	})
+}
+
+func TestUpdateMitraVenueLocationValidation(t *testing.T) {
+	const (
+		ownerID = "11111111-1111-1111-1111-111111111111"
+		venueID = "33333333-3333-3333-3333-333333333333"
+	)
+
+	repo := &stubOpsRepo{
+		venueOwnerID: ownerID,
+		venueID:      venueID,
+	}
+	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32), "test-jwt-secret", "development")
+	ctx := context.Background()
+
+	baseReq := func() domain.UpdateMitraVenueRequest {
+		return domain.UpdateMitraVenueRequest{
+			Nama:      "Taman Sari Baru",
+			Alamat:    "Jl. Tamanan No. 1, Yogyakarta",
+			JamBuka:   "08:00 - 17:00 WIB",
+			Deskripsi: "Destinasi wisata sejarah.",
+			Fasilitas: []string{"Parkir"},
+		}
+	}
+
+	t.Run("valid kotaKode, lokasi, and coordinates succeed and populate City", func(t *testing.T) {
+		req := baseReq()
+		kota := " JOGJA "
+		lokasi := " Kraton, Yogyakarta "
+		lat := -7.8101
+		lng := 110.3592
+		req.KotaKode = &kota
+		req.Lokasi = &lokasi
+		req.Latitude = &lat
+		req.Longitude = &lng
+
+		if _, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, req); err != nil {
+			t.Fatalf("expected UpdateMitraVenue to succeed, got %v", err)
+		}
+		if repo.updatedRequest == nil || repo.updatedRequest.KotaKode == nil || *repo.updatedRequest.KotaKode != "jogja" {
+			t.Fatalf("expected normalized kotaKode=jogja, got %+v", repo.updatedRequest)
+		}
+		if repo.updatedRequest.City == nil || *repo.updatedRequest.City != "D.I. Yogyakarta" {
+			t.Fatalf("expected populated City=D.I. Yogyakarta, got %+v", repo.updatedRequest.City)
+		}
+		if repo.updatedRequest.Lokasi == nil || *repo.updatedRequest.Lokasi != "Kraton, Yogyakarta" {
+			t.Fatalf("expected trimmed lokasi, got %+v", repo.updatedRequest.Lokasi)
+		}
+	})
+
+	t.Run("invalid kotaKode fails validation", func(t *testing.T) {
+		req := baseReq()
+		kota := "atlantis"
+		req.KotaKode = &kota
+
+		if _, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, req); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation for invalid kotaKode, got %v", err)
+		}
+	})
+
+	t.Run("single lat without lng fails validation", func(t *testing.T) {
+		req := baseReq()
+		lat := -7.8
+		req.Latitude = &lat
+
+		if _, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, req); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation when only latitude provided, got %v", err)
+		}
+	})
+
+	t.Run("out-of-range coordinates fail validation", func(t *testing.T) {
+		req := baseReq()
+		lat := 95.0
+		lng := 110.36
+		req.Latitude = &lat
+		req.Longitude = &lng
+
+		if _, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, req); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation for out-of-range latitude, got %v", err)
+		}
+	})
+}
+
+func TestUploadMitraVenueImage(t *testing.T) {
+	const (
+		ownerID = "11111111-1111-1111-1111-111111111111"
+		otherID = "22222222-2222-2222-2222-222222222222"
+		venueID = "33333333-3333-3333-3333-333333333333"
+	)
+
+	// Minimal valid 1x1 PNG header/payload recognized by http.DetectContentType.
+	validPNG := []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+		0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+		0x42, 0x60, 0x82,
+	}
+
+	t.Run("valid PNG upload saves local file and returns public URL", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repo := &stubOpsRepo{venueOwnerID: ownerID, venueID: venueID}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), "test-jwt", "development").
+			WithUploadDir(tmpDir)
+
+		venue, err := svc.UploadMitraVenueImage(context.Background(), ownerID, venueID, validPNG)
+		if err != nil {
+			t.Fatalf("expected UploadMitraVenueImage to succeed, got %v", err)
+		}
+		if !strings.HasPrefix(venue.GambarURL, "/api/v1/uploads/venues/") || !strings.HasSuffix(venue.GambarURL, ".png") {
+			t.Fatalf("unexpected GambarURL: %q", venue.GambarURL)
+		}
+
+		savedPath := filepath.Join(tmpDir, "venues", filepath.Base(venue.GambarURL))
+		data, err := os.ReadFile(savedPath)
+		if err != nil {
+			t.Fatalf("expected saved file at %s: %v", savedPath, err)
+		}
+		if !bytes.Equal(data, validPNG) {
+			t.Fatal("saved file bytes do not match uploaded PNG")
+		}
+	})
+
+	t.Run("invalid MIME type rejected with ErrValidation", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repo := &stubOpsRepo{venueOwnerID: ownerID, venueID: venueID}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), "test-jwt", "development").
+			WithUploadDir(tmpDir)
+
+		_, err := svc.UploadMitraVenueImage(context.Background(), ownerID, venueID, []byte("plain text not an image"))
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation for invalid MIME, got %v", err)
+		}
+	})
+
+	t.Run("oversized payload rejected with ErrValidation", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repo := &stubOpsRepo{venueOwnerID: ownerID, venueID: venueID}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), "test-jwt", "development").
+			WithUploadDir(tmpDir)
+
+		oversized := make([]byte, 5*1024*1024+1)
+		copy(oversized, validPNG)
+		_, err := svc.UploadMitraVenueImage(context.Background(), ownerID, venueID, oversized)
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation for >5MB file, got %v", err)
+		}
+	})
+
+	t.Run("non-owner rejected without creating any file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repo := &stubOpsRepo{venueOwnerID: ownerID, venueID: venueID}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), "test-jwt", "development").
+			WithUploadDir(tmpDir)
+
+		_, err := svc.UploadMitraVenueImage(context.Background(), otherID, venueID, validPNG)
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for non-owner, got %v", err)
+		}
+		entries, err := os.ReadDir(tmpDir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("expected no files created in %s, got %d", tmpDir, len(entries))
+		}
+	})
+
+	t.Run("re-uploading replaces and removes previous local file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repo := &stubOpsRepo{venueOwnerID: ownerID, venueID: venueID}
+		svc := NewOperationsService(repo, "qr-hmac-secret", make([]byte, 32), "test-jwt", "development").
+			WithUploadDir(tmpDir)
+
+		first, err := svc.UploadMitraVenueImage(context.Background(), ownerID, venueID, validPNG)
+		if err != nil {
+			t.Fatalf("first upload failed: %v", err)
+		}
+		firstPath := filepath.Join(tmpDir, "venues", filepath.Base(first.GambarURL))
+
+		// Sleep 2ms so UnixMilli timestamp differs for the second filename.
+		time.Sleep(2 * time.Millisecond)
+
+		second, err := svc.UploadMitraVenueImage(context.Background(), ownerID, venueID, validPNG)
+		if err != nil {
+			t.Fatalf("second upload failed: %v", err)
+		}
+		secondPath := filepath.Join(tmpDir, "venues", filepath.Base(second.GambarURL))
+
+		if firstPath == secondPath {
+			t.Fatalf("expected distinct filenames for sequential uploads: %s", firstPath)
+		}
+		if _, err := os.Stat(firstPath); !os.IsNotExist(err) {
+			t.Fatalf("expected old file %s to be removed, stat err=%v", firstPath, err)
+		}
+		if _, err := os.Stat(secondPath); err != nil {
+			t.Fatalf("expected new file %s to exist: %v", secondPath, err)
 		}
 	})
 }

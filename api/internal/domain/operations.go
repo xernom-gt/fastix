@@ -97,10 +97,15 @@ type MitraVenueDTO struct {
 // UpdateMitraVenueRequest is the input for PATCH /api/v1/mitra/venues/:id.
 type UpdateMitraVenueRequest struct {
 	Nama      string   `json:"nama"`
+	KotaKode  *string  `json:"kotaKode,omitempty"`
+	City      *string  `json:"-"`
+	Lokasi    *string  `json:"lokasi,omitempty"`
 	Alamat    string   `json:"alamat"`
 	JamBuka   string   `json:"jamBuka"`
 	Deskripsi string   `json:"deskripsi"`
 	Fasilitas []string `json:"fasilitas"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
 }
 
 // CreateTicketRequest is the input for POST /api/v1/mitra/tickets.

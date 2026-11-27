@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"io"
+
 	"fastix/api/internal/domain"
 	"fastix/api/internal/middleware"
 	"fastix/api/internal/response"
@@ -141,6 +143,36 @@ func (h *OperationsHandler) UpdateMitraVenue(c *fiber.Ctx) error {
 		return response.Fail(c, fiber.StatusBadRequest, "INVALID_JSON", "Format JSON tidak valid.", nil)
 	}
 	venue, err := h.svc.UpdateMitraVenue(c.UserContext(), claims.SubjectID, c.Params("id"), req)
+	if err != nil {
+		return handleDomainError(c, err)
+	}
+	return response.OK(c, venue, nil)
+}
+
+func (h *OperationsHandler) UploadMitraVenueImage(c *fiber.Ctx) error {
+	claims, ok := middleware.GetAuthClaims(c)
+	if !ok {
+		return response.Fail(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Autentikasi diperlukan.", nil)
+	}
+	fileHeader, err := c.FormFile("image")
+	if err != nil {
+		return response.Fail(c, fiber.StatusBadRequest, "FILE_REQUIRED", "File foto destinasi wajib diunggah.", nil)
+	}
+	if fileHeader.Size > 5*1024*1024 {
+		return response.Fail(c, fiber.StatusBadRequest, "FILE_TOO_LARGE", "Ukuran foto maksimal 5 MB.", nil)
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		return response.Fail(c, fiber.StatusBadRequest, "FILE_READ_ERROR", "Gagal membaca file foto yang diunggah.", nil)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
+	if err != nil {
+		return response.Fail(c, fiber.StatusBadRequest, "FILE_READ_ERROR", "Gagal membaca file foto yang diunggah.", nil)
+	}
+
+	venue, err := h.svc.UploadMitraVenueImage(c.UserContext(), claims.SubjectID, c.Params("id"), data)
 	if err != nil {
 		return handleDomainError(c, err)
 	}

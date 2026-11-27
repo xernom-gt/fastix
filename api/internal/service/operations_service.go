@@ -9,6 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +29,7 @@ type OperationsService struct {
 	kybAESKey    []byte
 	jwtSecret    string
 	isDev        bool
+	uploadDir    string
 }
 
 // NewOperationsService constructs an OperationsService.
@@ -35,7 +40,16 @@ func NewOperationsService(repo repository.OperationsRepository, qrHMACSecret str
 		kybAESKey:    kybAESKey,
 		jwtSecret:    jwtSecret,
 		isDev:        strings.EqualFold(appEnv, "development"),
+		uploadDir:    "./uploads",
 	}
+}
+
+// WithUploadDir overrides the base directory used for uploaded venue images.
+func (s *OperationsService) WithUploadDir(dir string) *OperationsService {
+	if trimmed := strings.TrimSpace(dir); trimmed != "" {
+		s.uploadDir = trimmed
+	}
+	return s
 }
 
 func (s *OperationsService) ListTodayGateTickets(ctx context.Context, venueID string) ([]domain.ETicketDTO, error) {
@@ -187,7 +201,12 @@ func (s *OperationsService) DemoApproveKYB(ctx context.Context, userID string, r
 		alamat = "Indonesia"
 	}
 
-	city, lokasi := resolveRegionCity(kotaKode)
+	city, lokasi, center, ok := resolveRegionMeta(kotaKode)
+	if !ok {
+		city = kotaKode
+		lokasi = kotaKode
+		center = domain.GeoPoint{Lat: -7.7956, Lng: 110.3695}
+	}
 
 	suffix, err := randomHexUpper(2)
 	if err != nil {
@@ -200,7 +219,7 @@ func (s *OperationsService) DemoApproveKYB(ctx context.Context, userID string, r
 		return domain.AuthTokenResponse{}, fmt.Errorf("hash default staff pin: %w", err)
 	}
 
-	profile, err := s.repo.DemoApproveKYBTx(ctx, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, string(pinHash))
+	profile, err := s.repo.DemoApproveKYBTx(ctx, userID, venueCode, venueName, kotaKode, city, lokasi, alamat, center.Lat, center.Lng, string(pinHash))
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.AuthTokenResponse{}, domain.NewAppError(domain.ErrNotFound, "USER_NOT_FOUND", "Pengguna tidak ditemukan.", nil)
 	}
@@ -219,13 +238,13 @@ func (s *OperationsService) DemoApproveKYB(ctx context.Context, userID string, r
 	}, nil
 }
 
-func resolveRegionCity(kotaKode string) (city, lokasi string) {
+func resolveRegionMeta(kotaKode string) (city, lokasi string, center domain.GeoPoint, ok bool) {
 	for _, r := range defaultRegions {
 		if strings.EqualFold(r.Kode, kotaKode) {
-			return r.Nama, r.Nama + ", " + r.Provinsi
+			return r.Nama, r.Nama + ", " + r.Provinsi, r.Pusat, true
 		}
 	}
-	return kotaKode, kotaKode
+	return "", "", domain.GeoPoint{}, false
 }
 
 func (s *OperationsService) ListMitraVenues(ctx context.Context, ownerID string) ([]domain.MitraVenueDTO, error) {
@@ -256,6 +275,33 @@ func (s *OperationsService) UpdateMitraVenue(ctx context.Context, ownerID, venue
 	if req.Deskripsi == "" {
 		details["deskripsi"] = "Deskripsi destinasi wajib diisi."
 	}
+	if req.KotaKode != nil {
+		norm := strings.ToLower(strings.TrimSpace(*req.KotaKode))
+		city, _, _, ok := resolveRegionMeta(norm)
+		if !ok {
+			details["kotaKode"] = "Wilayah destinasi tidak valid."
+		} else {
+			req.KotaKode = &norm
+			req.City = &city
+		}
+	}
+	if req.Lokasi != nil {
+		trimmed := strings.TrimSpace(*req.Lokasi)
+		if trimmed == "" {
+			details["lokasi"] = "Label lokasi singkat tidak boleh kosong."
+		} else {
+			req.Lokasi = &trimmed
+		}
+	}
+	if (req.Latitude != nil) != (req.Longitude != nil) {
+		details["koordinat"] = "Latitude dan longitude harus diisi bersamaan."
+	} else if req.Latitude != nil && req.Longitude != nil {
+		lat, lng := *req.Latitude, *req.Longitude
+		if math.IsNaN(lat) || math.IsInf(lat, 0) || math.IsNaN(lng) || math.IsInf(lng, 0) ||
+			lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+			details["koordinat"] = "Koordinat latitude/longitude tidak valid."
+		}
+	}
 	if len(details) > 0 {
 		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "VALIDATION_ERROR", "Data informasi destinasi tidak lengkap.", details)
 	}
@@ -274,6 +320,82 @@ func (s *OperationsService) UpdateMitraVenue(ctx context.Context, ownerID, venue
 		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrNotFound, "VENUE_NOT_FOUND", "Destinasi tidak ditemukan.", nil)
 	}
 	return venue, err
+}
+
+const maxVenueImageBytes = 5 * 1024 * 1024
+
+func detectVenueImageExt(data []byte) (string, bool) {
+	mime := http.DetectContentType(data)
+	switch mime {
+	case "image/jpeg":
+		return ".jpg", true
+	case "image/png":
+		return ".png", true
+	case "image/webp":
+		return ".webp", true
+	}
+	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
+		return ".webp", true
+	}
+	return "", false
+}
+
+func (s *OperationsService) UploadMitraVenueImage(ctx context.Context, ownerID, venueID string, fileData []byte) (domain.MitraVenueDTO, error) {
+	if !isValidUUID(venueID) {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_VENUE_ID", "Format venueId harus berupa UUID yang valid.", nil)
+	}
+	if len(fileData) == 0 {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "FILE_REQUIRED", "File foto destinasi wajib diunggah.", nil)
+	}
+	if len(fileData) > maxVenueImageBytes {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "FILE_TOO_LARGE", "Ukuran foto maksimal 5 MB.", nil)
+	}
+
+	ext, ok := detectVenueImageExt(fileData)
+	if !ok {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_IMAGE_TYPE", "Format foto harus JPG, PNG, atau WebP.", nil)
+	}
+
+	// Verify ownership before writing any file to disk.
+	oldURL, err := s.repo.GetMitraVenueImageURL(ctx, ownerID, venueID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrNotFound, "VENUE_NOT_FOUND", "Destinasi tidak ditemukan.", nil)
+	}
+	if err != nil {
+		return domain.MitraVenueDTO{}, err
+	}
+
+	dir := strings.TrimSpace(s.uploadDir)
+	if dir == "" {
+		dir = "./uploads"
+	}
+	venuesUploadDir := filepath.Join(dir, "venues")
+	if err := os.MkdirAll(venuesUploadDir, 0o755); err != nil {
+		return domain.MitraVenueDTO{}, fmt.Errorf("create venue upload dir: %w", err)
+	}
+
+	filename := fmt.Sprintf("%s-%d%s", venueID, time.Now().UnixMilli(), ext)
+	dstPath := filepath.Join(venuesUploadDir, filename)
+	if err := os.WriteFile(dstPath, fileData, 0o644); err != nil {
+		return domain.MitraVenueDTO{}, fmt.Errorf("write venue image: %w", err)
+	}
+
+	publicURL := "/api/v1/uploads/venues/" + filename
+	todayWIB := time.Now().In(wibZone).Format("2006-01-02")
+	venue, err := s.repo.UpdateMitraVenueImage(ctx, ownerID, venueID, todayWIB, publicURL)
+	if err != nil {
+		_ = os.Remove(dstPath)
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrNotFound, "VENUE_NOT_FOUND", "Destinasi tidak ditemukan.", nil)
+		}
+		return domain.MitraVenueDTO{}, err
+	}
+
+	if strings.HasPrefix(oldURL, "/api/v1/uploads/venues/") && oldURL != publicURL {
+		_ = os.Remove(filepath.Join(venuesUploadDir, filepath.Base(oldURL)))
+	}
+
+	return venue, nil
 }
 
 func (s *OperationsService) CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error) {

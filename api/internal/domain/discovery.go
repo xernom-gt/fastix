@@ -56,9 +56,10 @@ type VenueSummary struct {
 	JumlahUlasan   int      `json:"jumlahUlasan"`
 	GambarURL      string   `json:"gambarUrl"`
 	GambarAlt      string   `json:"gambarAlt"`
-	DistanceMeters *int64   `json:"distanceMeters,omitempty"`
-	RemainingQuota int      `json:"remainingQuota"`
-	IsPublished    bool     `json:"isPublished"`
+	DistanceMeters *int64    `json:"distanceMeters,omitempty"`
+	RemainingQuota int       `json:"remainingQuota"`
+	Koordinat      *GeoPoint `json:"koordinat,omitempty"`
+	IsPublished    bool      `json:"isPublished"`
 	Lat            *float64 `json:"-"`
 	Lng            *float64 `json:"-"`
 }
