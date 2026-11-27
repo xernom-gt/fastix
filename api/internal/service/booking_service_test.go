@@ -82,10 +82,25 @@ func (r *stubBookingRepo) SettlePaymentTx(_ context.Context, transactionID, gate
 }
 
 func (r *stubBookingRepo) ListTicketsByCustomer(_ context.Context, _ string) ([]domain.ETicketDTO, error) {
-	return []domain.ETicketDTO{}, nil
+	return []domain.ETicketDTO{
+		{
+			ID:         "red-1",
+			TicketCode: "PWL-TIX-GROUP005",
+			Quantity:   5,
+			Status:     domain.RedemptionStatusValid,
+		},
+	}, nil
 }
 
-func (r *stubBookingRepo) FindTicketByCode(_ context.Context, _, _ string) (domain.ETicketDTO, error) {
+func (r *stubBookingRepo) FindTicketByCode(_ context.Context, ticketCode, _ string) (domain.ETicketDTO, error) {
+	if ticketCode == "PWL-TIX-GROUP005" {
+		return domain.ETicketDTO{
+			ID:         "red-1",
+			TicketCode: ticketCode,
+			Quantity:   5,
+			Status:     domain.RedemptionStatusValid,
+		}, nil
+	}
 	return domain.ETicketDTO{}, domain.ErrNotFound
 }
 
@@ -463,5 +478,26 @@ func TestGetBookingAutoSyncsMidtransSettlement(t *testing.T) {
 	}
 	if pendingTx.PaymentStatus != domain.PaymentStatusPending {
 		t.Fatalf("expected PENDING when CheckOrderStatus fails, got %s", pendingTx.PaymentStatus)
+	}
+}
+
+func TestListAndGetMyTicketIncludesGroupQuantity(t *testing.T) {
+	svc := NewBookingService(&stubBookingRepo{}, "qr-hmac-secret-key-123456", "", "development", nil)
+	ctx := context.Background()
+
+	list, err := svc.ListMyTickets(ctx, "usr-1")
+	if err != nil {
+		t.Fatalf("ListMyTickets: %v", err)
+	}
+	if len(list) != 1 || list[0].Quantity != 5 {
+		t.Fatalf("expected 1 group ticket with Quantity=5, got %+v", list)
+	}
+
+	ticket, err := svc.GetMyTicket(ctx, "PWL-TIX-GROUP005", "usr-1")
+	if err != nil {
+		t.Fatalf("GetMyTicket: %v", err)
+	}
+	if ticket.Quantity != 5 {
+		t.Fatalf("expected Quantity=5, got %d", ticket.Quantity)
 	}
 }

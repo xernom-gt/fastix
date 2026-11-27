@@ -97,6 +97,7 @@ type ETicketDTO struct {
 	VenueAddress  string  `json:"venueAddress"`
 	TicketTitle   string  `json:"ticketTitle"`
 	BookingDate   string  `json:"bookingDate"`
+	Quantity      int     `json:"quantity"`
 	SignatureHash string  `json:"signatureHash"`
 	QRPayload     string  `json:"qrPayload"`
 	Status        string  `json:"status"`

@@ -47,7 +47,8 @@ func (r *PgxOperationsRepository) ListTodayGateTickets(ctx context.Context, venu
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			r.id::text, r.ticket_code, tr.invoice_number, v.id::text, v.venue_code, v.name, v.address,
-			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at
+			t.title, ti.booking_date, r.signature_hash, r.status::text, u.full_name, tr.paid_at, r.redeemed_at,
+			CASE WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1 THEN ti.quantity ELSE 1 END::int AS quantity
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
 		JOIN transactions tr ON tr.id = ti.transaction_id
@@ -75,21 +76,24 @@ func (r *PgxOperationsRepository) RedeemTicketTx(ctx context.Context, ticketCode
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var (
-		redemptionID string
-		status       string
-		prevRedeemed *time.Time
-		bookingDate  time.Time
-		unitPrice    int64
-		txVenueID    string
-		ownerID      string
-		txID         string
-		ticketName   string
-		holderName   string
+		redemptionID    string
+		status          string
+		prevRedeemed    *time.Time
+		bookingDate     time.Time
+		unitPrice       int64
+		itemQty         int
+		redemptionCount int
+		txVenueID       string
+		ownerID         string
+		txID            string
+		ticketName      string
+		holderName      string
 	)
 
 	err = tx.QueryRow(ctx, `
 		SELECT
-			r.id::text, r.status::text, r.redeemed_at, ti.booking_date, ti.unit_price::bigint,
+			r.id::text, r.status::text, r.redeemed_at, ti.booking_date, ti.unit_price::bigint, ti.quantity,
+			(SELECT COUNT(*)::int FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id),
 			v.id::text, v.owner_id::text, tr.id::text, t.title, u.full_name
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
@@ -105,6 +109,8 @@ func (r *PgxOperationsRepository) RedeemTicketTx(ctx context.Context, ticketCode
 		&prevRedeemed,
 		&bookingDate,
 		&unitPrice,
+		&itemQty,
+		&redemptionCount,
 		&txVenueID,
 		&ownerID,
 		&txID,
@@ -150,6 +156,12 @@ func (r *PgxOperationsRepository) RedeemTicketTx(ctx context.Context, ticketCode
 		return domain.GateRedeemResult{}, fmt.Errorf("mark redemption redeemed: %w", err)
 	}
 
+	visitorCount := 1
+	if redemptionCount == 1 && itemQty > 1 {
+		visitorCount = itemQty
+	}
+	creditAmount := unitPrice * int64(visitorCount)
+
 	// Credit net ticket revenue into owner pending_balance only upon actual gate check-in.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO owner_balances (owner_id, pending_balance, available_balance, updated_at)
@@ -157,14 +169,14 @@ func (r *PgxOperationsRepository) RedeemTicketTx(ctx context.Context, ticketCode
 		ON CONFLICT (owner_id) DO UPDATE SET
 			pending_balance = owner_balances.pending_balance + EXCLUDED.pending_balance,
 			updated_at = NOW()
-	`, ownerID, unitPrice); err != nil {
+	`, ownerID, creditAmount); err != nil {
 		return domain.GateRedeemResult{}, fmt.Errorf("credit owner pending balance: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO balance_mutations (owner_id, amount, type, reference_type, reference_id, description)
 		VALUES ($1::uuid, $2, 'PAYIN_INFLOW', 'TRANSACTION', $3::uuid, $4)
-	`, ownerID, unitPrice, txID, fmt.Sprintf("Check-in tiket %s (%s)", ticketCode, ticketName)); err != nil {
+	`, ownerID, creditAmount, txID, fmt.Sprintf("Check-in tiket %s (%s • %d orang)", ticketCode, ticketName, visitorCount)); err != nil {
 		return domain.GateRedeemResult{}, fmt.Errorf("insert payin mutation: %w", err)
 	}
 
@@ -177,6 +189,7 @@ func (r *PgxOperationsRepository) RedeemTicketTx(ctx context.Context, ticketCode
 		Status:     domain.RedemptionStatusRedeemed,
 		TicketName: ticketName,
 		HolderName: holderName,
+		Quantity:   visitorCount,
 		RedeemedAt: redeemedAt.In(wib).Format(time.RFC3339),
 		Message:    "Tiket valid, silakan masuk.",
 	}, nil
@@ -195,11 +208,15 @@ func (r *PgxOperationsRepository) ReleaseEscrowHPlusOne(ctx context.Context, tod
 			tr.id::text,
 			v.owner_id::text,
 			ti.unit_price::bigint,
-			(
-				SELECT COUNT(*)::int
-				FROM redemptions r
-				WHERE r.transaction_item_id = ti.id AND r.status = 'REDEEMED'
-			) AS redeemed_count
+			CASE
+				WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1
+					THEN ti.quantity
+				ELSE (
+					SELECT COUNT(*)::int
+					FROM redemptions r
+					WHERE r.transaction_item_id = ti.id AND r.status = 'REDEEMED'
+				)
+			END AS redeemed_count
 		FROM transaction_items ti
 		JOIN transactions tr ON tr.id = ti.transaction_id
 		JOIN venues v ON v.id = tr.venue_id
@@ -756,7 +773,12 @@ func (r *PgxOperationsRepository) GetMitraFinance(ctx context.Context, ownerID s
 	}
 
 	if err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(ti.unit_price), 0)::bigint
+		SELECT COALESCE(SUM(
+			CASE WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1
+				THEN ti.unit_price * ti.quantity
+				ELSE ti.unit_price
+			END
+		), 0)::bigint
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
 		JOIN transactions tr ON tr.id = ti.transaction_id
@@ -767,7 +789,12 @@ func (r *PgxOperationsRepository) GetMitraFinance(ctx context.Context, ownerID s
 	}
 
 	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*)::int
+		SELECT COALESCE(SUM(
+			CASE WHEN (SELECT COUNT(*) FROM redemptions r_all WHERE r_all.transaction_item_id = ti.id) = 1
+				THEN ti.quantity
+				ELSE 1
+			END
+		), 0)::int
 		FROM redemptions r
 		JOIN transaction_items ti ON ti.id = r.transaction_item_id
 		JOIN transactions tr ON tr.id = ti.transaction_id
