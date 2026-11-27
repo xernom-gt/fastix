@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { WILAYAH_INDONESIA, type KybStatus } from '@pariwisloka/shared';
 import { apiPost, getAuthToken } from '../services/apiClient';
-import { useAuth } from '../store/authStore';
+import { useAuth, type AuthUserDTO } from '../store/authStore';
+import { useBookings } from '../store/bookingStore';
 
 interface KybApplication {
   venueName: string;
@@ -40,9 +41,11 @@ function loadKybApplication(): KybApplication {
 }
 
 export default function MitraApplyPage() {
-  const { user, isAuthenticated, upgradeToOwner } = useAuth();
+  const { user, isAuthenticated, applyAuthenticatedSession, upgradeToOwner } = useAuth();
+  const { refreshVenues } = useBookings();
   const [form, setForm] = useState<KybApplication>(loadKybApplication);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState('');
 
   if (!isAuthenticated || !user) {
@@ -100,12 +103,41 @@ export default function MitraApplyPage() {
     }
   };
 
-  const handleSimulateApprove = () => {
-    saveForm({
-      ...form,
-      status: 'APPROVED',
-    });
-    upgradeToOwner(['tirta-gangga']);
+  const handleSimulateApprove = async () => {
+    setError('');
+    setIsApproving(true);
+    try {
+      if (getAuthToken()) {
+        const { data } = await apiPost<{ accessToken: string; user: AuthUserDTO }>(
+          '/mitra/kyb/demo-approve',
+          {
+            venueName: form.venueName.trim(),
+            kotaKode: form.kotaKode,
+            alamat: form.alamat.trim(),
+          },
+        );
+        applyAuthenticatedSession(data.accessToken, data.user);
+        void refreshVenues();
+        saveForm({
+          ...form,
+          status: 'APPROVED',
+        });
+      } else {
+        upgradeToOwner(['tirta-gangga']);
+        saveForm({
+          ...form,
+          status: 'APPROVED',
+        });
+      }
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Gagal mengaktifkan akun mitra. Silakan coba beberapa saat lagi.',
+      );
+    } finally {
+      setIsApproving(false);
+    }
   };
 
   if (user.role === 'OWNER' || form.status === 'APPROVED') {
@@ -127,13 +159,13 @@ export default function MitraApplyPage() {
           <div className="flex flex-wrap gap-3 pt-2">
             <Link
               to="/mitra"
-              className="px-5 py-2.5 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+              className="inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
             >
               Buka Dashboard Owner
             </Link>
             <Link
               to="/akun"
-              className="px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-[#111827] text-xs font-bold transition-colors"
+              className="inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-[#111827] text-xs font-bold transition-colors"
             >
               Kembali ke Akun
             </Link>
@@ -174,18 +206,29 @@ export default function MitraApplyPage() {
             rekening {form.bankName} ({form.bankAccountNumber}) sedang ditinjau oleh tim Admin.
           </p>
 
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-semibold text-red-700">
+              {error}
+            </div>
+          )}
+
           <div className="pt-3 border-t border-gray-100 flex flex-wrap gap-3">
             <button
               type="button"
               onClick={handleSimulateApprove}
-              className="px-5 py-2.5 rounded-xl bg-[#111827] hover:bg-black text-white text-xs font-bold transition-colors"
+              disabled={isApproving}
+              className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors"
             >
-              Setujui Pengajuan (Aktifkan Owner)
+              {isApproving ? 'Mengaktifkan...' : 'Diterima (Aktifkan Akun Mitra)'}
             </button>
             <button
               type="button"
-              onClick={() => saveForm({ ...form, status: 'NOT_SUBMITTED' })}
-              className="px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-xs font-bold text-[#111827] transition-colors"
+              disabled={isApproving}
+              onClick={() => {
+                setError('');
+                saveForm({ ...form, status: 'NOT_SUBMITTED' });
+              }}
+              className="min-h-[44px] px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-xs font-bold text-[#111827] transition-colors"
             >
               Ubah Data
             </button>
