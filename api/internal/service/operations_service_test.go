@@ -11,8 +11,13 @@ import (
 )
 
 type stubOpsRepo struct {
-	redeemedOnce bool
-	pendingAdded int64
+	redeemedOnce   bool
+	pendingAdded   int64
+	venueOwnerID   string
+	venueID        string
+	grossRevenue   int64
+	platformFee    int64
+	updatedRequest *domain.UpdateMitraVenueRequest
 }
 
 func (r *stubOpsRepo) ListTodayGateTickets(_ context.Context, _, _ string) ([]domain.ETicketDTO, error) {
@@ -46,6 +51,26 @@ func (r *stubOpsRepo) ListMitraVenues(_ context.Context, _, _ string) ([]domain.
 	return []domain.MitraVenueDTO{}, nil
 }
 
+func (r *stubOpsRepo) UpdateMitraVenue(_ context.Context, ownerID, venueID, _ string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error) {
+	if r.venueID != "" && (venueID != r.venueID || ownerID != r.venueOwnerID) {
+		return domain.MitraVenueDTO{}, domain.ErrNotFound
+	}
+	reqCopy := req
+	r.updatedRequest = &reqCopy
+	return domain.MitraVenueDTO{
+		ID:          venueID,
+		VenueCode:   "V-TEST",
+		Nama:        req.Nama,
+		KotaKode:    "jog",
+		Alamat:      req.Alamat,
+		JamBuka:     req.JamBuka,
+		Deskripsi:   req.Deskripsi,
+		Fasilitas:   req.Fasilitas,
+		IsPublished: true,
+		Tickets:     []domain.TicketProduct{},
+	}, nil
+}
+
 func (r *stubOpsRepo) CreateMitraTicket(_ context.Context, _ string, req domain.CreateTicketRequest) (domain.TicketProduct, error) {
 	return domain.TicketProduct{ID: "t-1", VenueID: req.VenueID, Title: req.Title, Price: req.Price, DailyQuota: req.DailyQuota}, nil
 }
@@ -67,7 +92,11 @@ func (r *stubOpsRepo) UpdateMitraStaff(_ context.Context, _, staffID string, _ *
 }
 
 func (r *stubOpsRepo) GetMitraFinance(_ context.Context, _ string) (domain.MitraFinanceSummary, error) {
-	return domain.MitraFinanceSummary{PendingBalance: r.pendingAdded}, nil
+	return domain.MitraFinanceSummary{
+		GrossRevenue:   r.grossRevenue,
+		PlatformFee:    r.platformFee,
+		PendingBalance: r.pendingAdded,
+	}, nil
 }
 
 func (r *stubOpsRepo) CreatePayoutTx(_ context.Context, _ string, amount, adminFee int64) (domain.PayoutDTO, error) {
@@ -126,5 +155,89 @@ func TestGateRedeemAndDoubleScan(t *testing.T) {
 	// Minimum payout validation
 	if _, err := svc.RequestPayout(ctx, "owner-1", domain.CreatePayoutRequest{Amount: 10000}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("expected ErrValidation for payout below minimum, got %v", err)
+	}
+}
+
+func TestUpdateMitraVenueValidationAndOwnership(t *testing.T) {
+	const (
+		ownerID = "11111111-1111-1111-1111-111111111111"
+		otherID = "22222222-2222-2222-2222-222222222222"
+		venueID = "33333333-3333-3333-3333-333333333333"
+	)
+
+	repo := &stubOpsRepo{
+		venueOwnerID: ownerID,
+		venueID:      venueID,
+	}
+	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32))
+	ctx := context.Background()
+
+	validReq := domain.UpdateMitraVenueRequest{
+		Nama:      "Taman Sari Baru",
+		Alamat:    "Jl. Tamanan No. 1, Yogyakarta",
+		JamBuka:   "08:00 - 17:00 WIB",
+		Deskripsi: "Destinasi wisata sejarah.",
+		Fasilitas: []string{" Parkir ", "", "Toilet"},
+	}
+
+	// Invalid UUID must fail validation
+	if _, err := svc.UpdateMitraVenue(ctx, ownerID, "not-a-uuid", validReq); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for invalid venue UUID, got %v", err)
+	}
+
+	// Empty required fields must fail validation
+	emptyCases := []struct {
+		name string
+		req  domain.UpdateMitraVenueRequest
+	}{
+		{"empty nama", domain.UpdateMitraVenueRequest{Nama: "   ", Alamat: validReq.Alamat, JamBuka: validReq.JamBuka, Deskripsi: validReq.Deskripsi}},
+		{"empty alamat", domain.UpdateMitraVenueRequest{Nama: validReq.Nama, Alamat: "", JamBuka: validReq.JamBuka, Deskripsi: validReq.Deskripsi}},
+		{"empty jamBuka", domain.UpdateMitraVenueRequest{Nama: validReq.Nama, Alamat: validReq.Alamat, JamBuka: "  ", Deskripsi: validReq.Deskripsi}},
+		{"empty deskripsi", domain.UpdateMitraVenueRequest{Nama: validReq.Nama, Alamat: validReq.Alamat, JamBuka: validReq.JamBuka, Deskripsi: ""}},
+	}
+	for _, tc := range emptyCases {
+		if _, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, tc.req); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("%s: expected ErrValidation, got %v", tc.name, err)
+		}
+	}
+
+	// Non-owner must receive ErrNotFound (404)
+	if _, err := svc.UpdateMitraVenue(ctx, otherID, venueID, validReq); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-owner, got %v", err)
+	}
+
+	// Owner update succeeds and normalizes fields
+	updated, err := svc.UpdateMitraVenue(ctx, ownerID, venueID, validReq)
+	if err != nil {
+		t.Fatalf("expected UpdateMitraVenue to succeed, got %v", err)
+	}
+	if updated.ID != venueID || updated.Nama != validReq.Nama {
+		t.Fatalf("unexpected updated venue: %+v", updated)
+	}
+	if repo.updatedRequest == nil || len(repo.updatedRequest.Fasilitas) != 2 || repo.updatedRequest.Fasilitas[0] != "Parkir" {
+		t.Fatalf("expected cleaned fasilitas, got %+v", repo.updatedRequest)
+	}
+}
+
+func TestGetMitraFinanceIncludesGrossRevenueAndPlatformFee(t *testing.T) {
+	repo := &stubOpsRepo{
+		grossRevenue: 1500000,
+		platformFee:  75000,
+		pendingAdded: 1425000,
+	}
+	svc := NewOperationsService(repo, "qr-hmac-secret-key-123456", make([]byte, 32))
+
+	summary, err := svc.GetMitraFinance(context.Background(), "owner-1")
+	if err != nil {
+		t.Fatalf("GetMitraFinance: %v", err)
+	}
+	if summary.GrossRevenue != 1500000 {
+		t.Fatalf("expected GrossRevenue=1500000, got %d", summary.GrossRevenue)
+	}
+	if summary.PlatformFee != 75000 {
+		t.Fatalf("expected PlatformFee=75000, got %d", summary.PlatformFee)
+	}
+	if summary.PendingBalance != 1425000 {
+		t.Fatalf("expected PendingBalance=1425000, got %d", summary.PendingBalance)
 	}
 }

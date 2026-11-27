@@ -168,6 +168,49 @@ func (s *OperationsService) ListMitraVenues(ctx context.Context, ownerID string)
 	return s.repo.ListMitraVenues(ctx, ownerID, todayWIB)
 }
 
+func (s *OperationsService) UpdateMitraVenue(ctx context.Context, ownerID, venueID string, req domain.UpdateMitraVenueRequest) (domain.MitraVenueDTO, error) {
+	if !isValidUUID(venueID) {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "INVALID_VENUE_ID", "Format venueId harus berupa UUID yang valid.", nil)
+	}
+
+	req.Nama = strings.TrimSpace(req.Nama)
+	req.Alamat = strings.TrimSpace(req.Alamat)
+	req.JamBuka = strings.TrimSpace(req.JamBuka)
+	req.Deskripsi = strings.TrimSpace(req.Deskripsi)
+
+	details := map[string]string{}
+	if req.Nama == "" {
+		details["nama"] = "Nama destinasi wajib diisi."
+	}
+	if req.Alamat == "" {
+		details["alamat"] = "Alamat destinasi wajib diisi."
+	}
+	if req.JamBuka == "" {
+		details["jamBuka"] = "Jam buka wajib diisi."
+	}
+	if req.Deskripsi == "" {
+		details["deskripsi"] = "Deskripsi destinasi wajib diisi."
+	}
+	if len(details) > 0 {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrValidation, "VALIDATION_ERROR", "Data informasi destinasi tidak lengkap.", details)
+	}
+
+	cleanedFasilitas := make([]string, 0, len(req.Fasilitas))
+	for _, f := range req.Fasilitas {
+		if trimmed := strings.TrimSpace(f); trimmed != "" {
+			cleanedFasilitas = append(cleanedFasilitas, trimmed)
+		}
+	}
+	req.Fasilitas = cleanedFasilitas
+
+	todayWIB := time.Now().In(wibZone).Format("2006-01-02")
+	venue, err := s.repo.UpdateMitraVenue(ctx, ownerID, venueID, todayWIB, req)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.MitraVenueDTO{}, domain.NewAppError(domain.ErrNotFound, "VENUE_NOT_FOUND", "Destinasi tidak ditemukan.", nil)
+	}
+	return venue, err
+}
+
 func (s *OperationsService) CreateMitraTicket(ctx context.Context, ownerID string, req domain.CreateTicketRequest) (domain.TicketProduct, error) {
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)

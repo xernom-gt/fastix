@@ -150,6 +150,7 @@ func main() {
 	v1.Post("/mitra/kyb", requireAuth, middleware.RequireRoles(domain.RoleTourist, domain.RoleMitra), opsHandler.SubmitKYB)
 	mitraGroup := v1.Group("/mitra", requireAuth, middleware.RequireRoles(domain.RoleMitra))
 	mitraGroup.Get("/venues", opsHandler.ListMitraVenues)
+	mitraGroup.Patch("/venues/:id", opsHandler.UpdateMitraVenue)
 	mitraGroup.Post("/tickets", opsHandler.CreateMitraTicket)
 	mitraGroup.Patch("/tickets/:id", opsHandler.UpdateMitraTicket)
 	mitraGroup.Get("/staffs", opsHandler.ListMitraStaffs)
