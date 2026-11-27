@@ -95,10 +95,14 @@ export interface MitraVenueDTO {
 
 export interface UpdateMitraVenueRequest {
   nama?: string;
+  kotaKode?: string;
+  lokasi?: string;
   alamat?: string;
   jamBuka?: string;
   deskripsi?: string;
   fasilitas?: string[];
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface CreateTicketRequest {
@@ -229,6 +233,46 @@ export async function apiUpdateMitraVenue(
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+}
+
+export function resolveMitraAssetUrl(url: string | undefined | null): string {
+  const trimmed = typeof url === 'string' ? url.trim() : '';
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed) || /^blob:/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/') && /^https?:\/\//i.test(API_BASE_URL)) {
+    return new URL(API_BASE_URL).origin + trimmed;
+  }
+  return trimmed;
+}
+
+export async function apiUploadMitraVenueImage(
+  venueId: string,
+  file: File,
+): Promise<MitraVenueDTO> {
+  const token = getFastixAuthToken();
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await fetch(
+    `${API_BASE_URL}/mitra/venues/${encodeURIComponent(venueId)}/image`,
+    {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    },
+  );
+
+  const json = (await response.json().catch(() => null)) as ApiEnvelope<MitraVenueDTO> | null;
+  if (!response.ok || !json?.success) {
+    const errorMsg =
+      json?.error?.message ||
+      `Gagal mengunggah foto destinasi ke server (${response.status}).`;
+    throw new Error(errorMsg);
+  }
+
+  return json.data as MitraVenueDTO;
 }
 
 export async function apiCreateMitraTicket(req: CreateTicketRequest): Promise<TicketProduct> {

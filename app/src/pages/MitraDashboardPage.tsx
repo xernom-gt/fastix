@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { formatRupiah, getTodayISO, type Destinasi, type TicketProduct } from '@pariwisloka/shared';
+import {
+  formatRupiah,
+  getTodayISO,
+  WILAYAH_INDONESIA,
+  type Destinasi,
+  type TicketProduct,
+} from '@pariwisloka/shared';
 import { parseOwnerTab, type OwnerTab } from '../components/OwnerLayout';
+import VenueLocationPicker from '../components/VenueLocationPicker';
 import { useAuth } from '../store/authStore';
 import { useBookings } from '../store/bookingStore';
 import {
@@ -14,12 +21,14 @@ import {
   apiUpdateMitraStaff,
   apiUpdateMitraTicket,
   apiUpdateMitraVenue,
+  apiUploadMitraVenueImage,
   DISBURSEMENT_BANK_ADMIN_FEE,
   getVerifiedBankAccount,
   loadBalanceMutations,
   loadPayoutHistory,
   loadStaffAccounts,
   MIN_PAYOUT_AMOUNT,
+  resolveMitraAssetUrl,
   saveBalanceMutations,
   savePayoutHistory,
   saveStaffAccounts,
@@ -41,6 +50,11 @@ function getVenueTimezone(venue: Destinasi): 'WIB' | 'WITA' {
     return 'WITA';
   }
   return 'WIB';
+}
+
+function getRegionCenter(kotaKode: string): { lat: number; lng: number } {
+  const match = WILAYAH_INDONESIA.find((w) => w.kode === kotaKode);
+  return match ? match.pusat : { lat: -7.7956, lng: 110.3695 };
 }
 
 function mergeApiVenueToDestinasi(av: MitraVenueDTO, fallback?: Destinasi): Destinasi {
@@ -107,8 +121,9 @@ const TAB_HEADINGS: Record<OwnerTab, string> = {
 };
 
 export default function MitraDashboardPage() {
-  const { user, isAuthenticated } = useAuth();
-  const { venues, updateVenues, getExtraUsedQuota, transactions, tickets } = useBookings();
+    const { user, isAuthenticated } = useAuth();
+  const { venues, updateVenues, refreshVenues, getExtraUsedQuota, transactions, tickets } =
+    useBookings();
   const [staffs, setStaffs] = useState<StaffGateAccount[]>(loadStaffAccounts);
   const [mutations, setMutations] = useState<BalanceMutation[]>(loadBalanceMutations);
   const [payouts, setPayouts] = useState<PayoutRecord[]>(loadPayoutHistory);
@@ -158,15 +173,28 @@ export default function MitraDashboardPage() {
 
   // Destination profile edit state
   const [profileName, setProfileName] = useState('');
+  const [profileKotaKode, setProfileKotaKode] = useState(WILAYAH_INDONESIA[0]?.kode ?? 'jogja');
+  const [profileLokasi, setProfileLokasi] = useState('');
   const [profileAddress, setProfileAddress] = useState('');
   const [profileHours, setProfileHours] = useState('');
   const [profileDesc, setProfileDesc] = useState('');
+  const [profileLat, setProfileLat] = useState(String(getRegionCenter('jogja').lat));
+  const [profileLng, setProfileLng] = useState(String(getRegionCenter('jogja').lng));
   const [profileFacilities, setProfileFacilities] = useState<string[]>([]);
   const [newFacility, setNewFacility] = useState('');
   const [profileFeedback, setProfileFeedback] = useState<{
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageFeedback, setImageFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [previewImgError, setPreviewImgError] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeVenue = useMemo(
     () => ownedVenues.find((v) => v.id === selectedVenueId) ?? ownedVenues[0],
@@ -229,23 +257,44 @@ export default function MitraDashboardPage() {
 
   useEffect(() => {
     if (!activeVenue) return;
+    const nextKotaKode = activeVenue.kotaKode || WILAYAH_INDONESIA[0]?.kode || 'jogja';
+    const hasCoords =
+      activeVenue.koordinat &&
+      (activeVenue.koordinat.lat !== 0 || activeVenue.koordinat.lng !== 0);
+    const initialCoords = hasCoords ? activeVenue.koordinat : getRegionCenter(nextKotaKode);
+
     setProfileName(activeVenue.nama);
+    setProfileKotaKode(nextKotaKode);
+    setProfileLokasi(activeVenue.lokasi);
     setProfileAddress(activeVenue.alamat);
     setProfileHours(activeVenue.jamBuka);
     setProfileDesc(activeVenue.deskripsi);
+    setProfileLat(String(initialCoords.lat));
+    setProfileLng(String(initialCoords.lng));
     setProfileFacilities(activeVenue.fasilitas);
   }, [
     activeVenue?.id,
     activeVenue?.nama,
+    activeVenue?.kotaKode,
+    activeVenue?.lokasi,
     activeVenue?.alamat,
     activeVenue?.jamBuka,
     activeVenue?.deskripsi,
+    activeVenue?.koordinat?.lat,
+    activeVenue?.koordinat?.lng,
     activeVenue?.fasilitas,
   ]);
 
   useEffect(() => {
+    setPreviewImgError(false);
+  }, [activeVenue?.gambarUrl]);
+
+  useEffect(() => {
     setNewFacility('');
     setProfileFeedback(null);
+    setImageFeedback(null);
+    setGpsStatus('idle');
+    setGpsError(null);
     setPayoutFeedback(null);
   }, [activeVenue?.id]);
 
@@ -736,27 +785,161 @@ export default function MitraDashboardPage() {
     setProfileFacilities(profileFacilities.filter((f) => f !== facilityToRemove));
   };
 
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !activeVenue) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setImageFeedback({
+        type: 'error',
+        message: 'Format file tidak didukung. Gunakan foto JPG, PNG, atau WebP.',
+      });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setImageFeedback({
+        type: 'error',
+        message: 'Ukuran foto maksimal 5 MB. Pilih file yang lebih kecil.',
+      });
+      return;
+    }
+
+    setIsUploadingImage(true);
+    setImageFeedback(null);
+
+    try {
+      const updatedDto = await apiUploadMitraVenueImage(activeVenue.id, file);
+
+      setApiVenues((prev) => {
+        const exists = prev.some((av) => av.id === updatedDto.id);
+        if (exists) {
+          return prev.map((av) => (av.id === updatedDto.id ? { ...av, ...updatedDto } : av));
+        }
+        return [...prev, updatedDto];
+      });
+
+      const mergedUpdated = mergeApiVenueToDestinasi(updatedDto, activeVenue);
+      const existsInVenues = venues.some((v) => v.id === activeVenue.id);
+      const nextVenues = existsInVenues
+        ? venues.map((v) => (v.id === activeVenue.id ? mergedUpdated : v))
+        : [...venues, mergedUpdated];
+      updateVenues(nextVenues);
+      setPreviewImgError(false);
+      void refreshVenues();
+
+      setImageFeedback({
+        type: 'success',
+        message:
+          'Foto display destinasi berhasil diunggah dan langsung tampil di katalog Wisata & Jelajah.',
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Gagal mengunggah foto destinasi ke server.';
+      setImageFeedback({
+        type: 'error',
+        message,
+      });
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleRegionChange = (nextKotaKode: string) => {
+    setProfileKotaKode(nextKotaKode);
+    const region = WILAYAH_INDONESIA.find((w) => w.kode === nextKotaKode);
+    if (!region) return;
+
+    setProfileLat(String(region.pusat.lat));
+    setProfileLng(String(region.pusat.lng));
+    setGpsStatus('idle');
+    setGpsError(null);
+
+    const trimmedLokasi = profileLokasi.trim();
+    if (!trimmedLokasi || trimmedLokasi === 'Indonesia') {
+      const cityPart = region.nama.split(' (')[0].trim();
+      const nextLokasi =
+        cityPart === region.provinsi ? region.provinsi : `${cityPart}, ${region.provinsi}`;
+      setProfileLokasi(nextLokasi);
+    }
+  };
+
+  const handleUseMyGps = () => {
+    if (!navigator.geolocation) {
+      setGpsStatus('error');
+      setGpsError('Browser tidak mendukung geolokasi. Klik atau geser pin di peta secara manual.');
+      return;
+    }
+
+    setGpsStatus('loading');
+    setGpsError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setProfileLat(String(Number(pos.coords.latitude.toFixed(6))));
+        setProfileLng(String(Number(pos.coords.longitude.toFixed(6))));
+        setGpsStatus('ok');
+      },
+      (err) => {
+        setGpsStatus('error');
+        setGpsError(
+          err.code === err.PERMISSION_DENIED
+            ? 'Izin lokasi ditolak browser. Aktifkan izin lokasi atau geser pin di peta.'
+            : 'Gagal mengambil koordinat GPS. Silakan klik atau geser pin di peta.',
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !profileName.trim() ||
+      !profileLokasi.trim() ||
       !profileAddress.trim() ||
       !profileHours.trim() ||
       !profileDesc.trim()
     ) {
       setProfileFeedback({
         type: 'error',
-        message: 'Nama destinasi, alamat, jam operasional, dan deskripsi wajib diisi.',
+        message:
+          'Nama destinasi, label lokasi singkat, alamat, jam operasional, dan deskripsi wajib diisi.',
+      });
+      return;
+    }
+
+    const parsedLat = Number(profileLat);
+    const parsedLng = Number(profileLng);
+    if (
+      !Number.isFinite(parsedLat) ||
+      parsedLat < -90 ||
+      parsedLat > 90 ||
+      !Number.isFinite(parsedLng) ||
+      parsedLng < -180 ||
+      parsedLng > 180
+    ) {
+      setProfileFeedback({
+        type: 'error',
+        message:
+          'Koordinat tidak valid. Latitude harus antara -90 s.d. 90 dan Longitude antara -180 s.d. 180.',
       });
       return;
     }
 
     const payload = {
       nama: profileName.trim(),
+      kotaKode: profileKotaKode,
+      lokasi: profileLokasi.trim(),
       alamat: profileAddress.trim(),
       jamBuka: profileHours.trim(),
       deskripsi: profileDesc.trim(),
       fasilitas: profileFacilities,
+      latitude: Number(parsedLat.toFixed(6)),
+      longitude: Number(parsedLng.toFixed(6)),
     };
 
     setIsSubmitting(true);
@@ -779,10 +962,12 @@ export default function MitraDashboardPage() {
         ? venues.map((v) => (v.id === activeVenue.id ? mergedUpdated : v))
         : [...venues, mergedUpdated];
       updateVenues(nextVenues);
+      void refreshVenues();
 
       setProfileFeedback({
         type: 'success',
-        message: 'Profil destinasi berhasil disimpan ke server dan langsung sinkron ke katalog wisatawan.',
+        message:
+          'Profil dan titik lokasi destinasi berhasil disimpan dan langsung sinkron ke katalog wisatawan.',
       });
     } catch (error) {
       const message =
@@ -799,6 +984,13 @@ export default function MitraDashboardPage() {
   };
 
   const venueTimezone = getVenueTimezone(activeVenue);
+  const resolvedVenueImageUrl = resolveMitraAssetUrl(activeVenue.gambarUrl);
+  const hasVenuePhoto = Boolean(resolvedVenueImageUrl) && !previewImgError;
+  const parsedPickerLat = Number(profileLat);
+  const parsedPickerLng = Number(profileLng);
+  const pickerFallback = getRegionCenter(profileKotaKode);
+  const pickerLat = Number.isFinite(parsedPickerLat) ? parsedPickerLat : pickerFallback.lat;
+  const pickerLng = Number.isFinite(parsedPickerLng) ? parsedPickerLng : pickerFallback.lng;
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-12 space-y-6">
@@ -1148,166 +1340,396 @@ export default function MitraDashboardPage() {
           </div>
         </div>
       ) : activeTab === 'profile' ? (
-        <form
-          onSubmit={handleSaveProfile}
-          className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 space-y-5"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-gray-100">
-            <div>
-              <h3 className="text-base font-extrabold text-[#111827]">Informasi Publik Destinasi</h3>
-              <p className="text-xs text-gray-500">
-                Perubahan langsung tersimpan dan tampil pada halaman detail destinasi wisatawan.
-              </p>
+        <div className="space-y-5">
+          {/* Card 1: Foto Display Destinasi */}
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-extrabold text-[#111827]">Foto Display Destinasi</h3>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Unggah foto utama destinasi (JPG, PNG, atau WebP, maks. 5 MB). Foto disimpan di
+                  server lokal dan langsung tampil di katalog Wisata &amp; Jelajah.
+                </p>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-[11px] font-bold text-[#111827] w-fit">
+                Rasio 16:9
+              </span>
             </div>
-            <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-[11px] font-bold text-[#111827] w-fit">
-              Kode: {activeVenue.venueCode}
-            </span>
-          </div>
 
-          {profileFeedback && (
-            <div
-              className={`rounded-xl border px-4 py-3 text-xs font-semibold ${
-                profileFeedback.type === 'error'
-                  ? 'border-red-200 bg-red-50 text-red-700'
-                  : 'border-emerald-200 bg-emerald-50 text-emerald-800'
-              }`}
-            >
-              {profileFeedback.message}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label
-                htmlFor="mitra-profile-name"
-                className="block text-xs font-semibold text-gray-700"
+            {imageFeedback && (
+              <div
+                role="status"
+                className={`rounded-xl border px-4 py-3 text-xs font-semibold flex items-center gap-2 ${
+                  imageFeedback.type === 'error'
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                }`}
               >
-                Nama Destinasi
-              </label>
+                <span className="material-symbols-outlined text-[18px] shrink-0" aria-hidden="true">
+                  {imageFeedback.type === 'error' ? 'error' : 'check_circle'}
+                </span>
+                <span>{imageFeedback.message}</span>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div className="aspect-[16/9] max-w-xl w-full rounded-xl overflow-hidden border border-gray-200 bg-gray-100">
+                {hasVenuePhoto ? (
+                  <img
+                    src={resolvedVenueImageUrl}
+                    alt={activeVenue.nama}
+                    onError={() => setPreviewImgError(true)}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 p-4 text-center text-gray-600">
+                    <span className="material-symbols-outlined text-[32px]" aria-hidden="true">
+                      add_photo_alternate
+                    </span>
+                    <p className="text-xs font-semibold text-gray-700">
+                      Belum ada foto display destinasi
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <input
-                id="mitra-profile-name"
-                type="text"
-                value={profileName}
-                onChange={(e) => setProfileName(e.target.value)}
-                required
-                className="w-full h-11 px-3.5 rounded-xl border border-gray-300 text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleImageFileChange}
+                className="sr-only"
+                aria-label="Pilih file foto display destinasi"
               />
-            </div>
 
-            <div className="space-y-1.5">
-              <label
-                htmlFor="mitra-profile-hours"
-                className="block text-xs font-semibold text-gray-700"
-              >
-                Jam Operasional
-              </label>
-              <input
-                id="mitra-profile-hours"
-                type="text"
-                value={profileHours}
-                onChange={(e) => setProfileHours(e.target.value)}
-                placeholder={`06.00 - 18.00 ${venueTimezone}`}
-                required
-                className="w-full h-11 px-3.5 rounded-xl border border-gray-300 text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label
-              htmlFor="mitra-profile-address"
-              className="block text-xs font-semibold text-gray-700"
-            >
-              Alamat Lengkap
-            </label>
-            <input
-              id="mitra-profile-address"
-              type="text"
-              value={profileAddress}
-              onChange={(e) => setProfileAddress(e.target.value)}
-              required
-              className="w-full h-11 px-3.5 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="mitra-profile-desc" className="block text-xs font-semibold text-gray-700">
-              Deskripsi Destinasi
-            </label>
-            <textarea
-              id="mitra-profile-desc"
-              rows={3}
-              value={profileDesc}
-              onChange={(e) => setProfileDesc(e.target.value)}
-              required
-              className="w-full p-3.5 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
-            />
-          </div>
-
-          <div className="space-y-2.5">
-            <label
-              htmlFor="mitra-profile-facility"
-              className="block text-xs font-semibold text-gray-700"
-            >
-              Fasilitas Tersedia
-            </label>
-
-            <div className="flex flex-wrap gap-2">
-              {profileFacilities.map((facility) => (
-                <span
-                  key={facility}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 border border-gray-200 text-xs font-semibold text-[#111827]"
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={isUploadingImage}
+                  onClick={() => imageInputRef.current?.click()}
+                  className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2.5 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer text-white text-xs font-bold transition-colors"
                 >
-                  <span>{facility}</span>
+                  <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                    upload
+                  </span>
+                  <span>
+                    {isUploadingImage
+                      ? 'Mengunggah Foto...'
+                      : hasVenuePhoto
+                        ? 'Ganti Foto Destinasi'
+                        : 'Unggah Foto Destinasi'}
+                  </span>
+                </button>
+                <span className="text-xs text-gray-600">
+                  Format JPG, PNG, atau WebP, maksimal 5 MB.
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* Card 2: Informasi & Lokasi Destinasi */}
+          <form
+            onSubmit={handleSaveProfile}
+            className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 space-y-5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-extrabold text-[#111827]">
+                  Informasi Publik &amp; Lokasi Destinasi
+                </h3>
+                <p className="text-xs text-gray-600">
+                  Perubahan langsung tersimpan dan tampil pada halaman detail destinasi wisatawan.
+                </p>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-[11px] font-bold text-[#111827] w-fit">
+                Kode: {activeVenue.venueCode}
+              </span>
+            </div>
+
+            {profileFeedback && (
+              <div
+                role="status"
+                className={`rounded-xl border px-4 py-3 text-xs font-semibold flex items-center gap-2 ${
+                  profileFeedback.type === 'error'
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[18px] shrink-0" aria-hidden="true">
+                  {profileFeedback.type === 'error' ? 'error' : 'check_circle'}
+                </span>
+                <span>{profileFeedback.message}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="mitra-profile-name"
+                  className="block text-xs font-semibold text-gray-700"
+                >
+                  Nama Destinasi
+                </label>
+                <input
+                  id="mitra-profile-name"
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  required
+                  className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="mitra-profile-hours"
+                  className="block text-xs font-semibold text-gray-700"
+                >
+                  Jam Operasional
+                </label>
+                <input
+                  id="mitra-profile-hours"
+                  type="text"
+                  value={profileHours}
+                  onChange={(e) => setProfileHours(e.target.value)}
+                  placeholder={`06.00 - 18.00 ${venueTimezone}`}
+                  required
+                  className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Pengaturan Lokasi & Titik Peta */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 sm:p-5 space-y-4">
+              <div>
+                <h4 className="text-sm font-extrabold text-[#111827]">
+                  Pengaturan Lokasi &amp; Titik Peta
+                </h4>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Atur wilayah, label lokasi singkat, alamat, dan titik koordinat akurat di peta.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="mitra-profile-region"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
+                    Wilayah / Kota
+                  </label>
+                  <select
+                    id="mitra-profile-region"
+                    value={profileKotaKode}
+                    onChange={(e) => handleRegionChange(e.target.value)}
+                    className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-semibold text-[#111827] cursor-pointer focus:border-[#111827] focus:outline-none"
+                  >
+                    {WILAYAH_INDONESIA.map((region) => (
+                      <option key={region.kode} value={region.kode}>
+                        {region.nama}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="mitra-profile-lokasi"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
+                    Label Lokasi Singkat
+                  </label>
+                  <input
+                    id="mitra-profile-lokasi"
+                    type="text"
+                    value={profileLokasi}
+                    onChange={(e) => setProfileLokasi(e.target.value)}
+                    placeholder="Karangasem, Bali"
+                    required
+                    className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="mitra-profile-address"
+                  className="block text-xs font-semibold text-gray-700"
+                >
+                  Alamat Lengkap
+                </label>
+                <input
+                  id="mitra-profile-address"
+                  type="text"
+                  value={profileAddress}
+                  onChange={(e) => setProfileAddress(e.target.value)}
+                  required
+                  className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 bg-white text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <p className="text-xs font-medium text-gray-700">
+                    Klik atau geser pin di peta untuk menentukan titik lokasi.
+                  </p>
                   <button
                     type="button"
-                    aria-label={`Hapus fasilitas ${facility}`}
-                    onClick={() => handleRemoveFacility(facility)}
-                    className="text-gray-500 hover:text-[#111827]"
+                    disabled={gpsStatus === 'loading'}
+                    onClick={handleUseMyGps}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2 rounded-xl border border-gray-300 bg-white hover:border-[#111827] hover:bg-gray-50 disabled:opacity-60 cursor-pointer text-xs font-bold text-[#111827] transition-colors w-full sm:w-auto"
                   >
-                    <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
-                      close
+                    <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                      my_location
                     </span>
+                    <span>{gpsStatus === 'loading' ? 'Mencari GPS...' : 'Gunakan GPS Saya'}</span>
                   </button>
-                </span>
-              ))}
+                </div>
+
+                {gpsStatus === 'error' && gpsError && (
+                  <p role="alert" className="text-xs font-semibold text-red-700">
+                    {gpsError}
+                  </p>
+                )}
+
+                <VenueLocationPicker
+                  lat={pickerLat}
+                  lng={pickerLng}
+                  label={profileName || activeVenue.nama}
+                  onChange={({ lat, lng }) => {
+                    setProfileLat(String(lat));
+                    setProfileLng(String(lng));
+                    setGpsStatus('idle');
+                    setGpsError(null);
+                  }}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="mitra-profile-lat"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
+                    Latitude
+                  </label>
+                  <input
+                    id="mitra-profile-lat"
+                    type="number"
+                    step="0.000001"
+                    min={-90}
+                    max={90}
+                    value={profileLat}
+                    onChange={(e) => setProfileLat(e.target.value)}
+                    required
+                    className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 bg-white font-mono text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="mitra-profile-lng"
+                    className="block text-xs font-semibold text-gray-700"
+                  >
+                    Longitude
+                  </label>
+                  <input
+                    id="mitra-profile-lng"
+                    type="number"
+                    step="0.000001"
+                    min={-180}
+                    max={180}
+                    value={profileLng}
+                    onChange={(e) => setProfileLng(e.target.value)}
+                    required
+                    className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-gray-300 bg-white font-mono text-xs font-semibold text-[#111827] focus:border-[#111827] focus:outline-none"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="flex gap-2 max-w-md">
-              <input
-                id="mitra-profile-facility"
-                type="text"
-                value={newFacility}
-                onChange={(e) => setNewFacility(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddFacility();
-                  }
-                }}
-                placeholder="Tambah fasilitas (mis. Mushola)"
-                className="flex-1 h-10 px-3 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={handleAddFacility}
-                className="px-4 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 border border-gray-300 text-xs font-bold text-[#111827] transition-colors"
+            <div className="space-y-1.5">
+              <label
+                htmlFor="mitra-profile-desc"
+                className="block text-xs font-semibold text-gray-700"
               >
-                Tambah
+                Deskripsi Destinasi
+              </label>
+              <textarea
+                id="mitra-profile-desc"
+                rows={3}
+                value={profileDesc}
+                onChange={(e) => setProfileDesc(e.target.value)}
+                required
+                className="w-full p-3.5 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-2.5">
+              <label
+                htmlFor="mitra-profile-facility"
+                className="block text-xs font-semibold text-gray-700"
+              >
+                Fasilitas Tersedia
+              </label>
+
+              <div className="flex flex-wrap gap-2">
+                {profileFacilities.map((facility) => (
+                  <span
+                    key={facility}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 border border-gray-200 text-xs font-semibold text-[#111827]"
+                  >
+                    <span>{facility}</span>
+                    <button
+                      type="button"
+                      aria-label={`Hapus fasilitas ${facility}`}
+                      onClick={() => handleRemoveFacility(facility)}
+                      className="min-h-[28px] min-w-[28px] inline-flex items-center justify-center cursor-pointer text-gray-600 hover:text-[#111827]"
+                    >
+                      <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                        close
+                      </span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex gap-2 max-w-md">
+                <input
+                  id="mitra-profile-facility"
+                  type="text"
+                  value={newFacility}
+                  onChange={(e) => setNewFacility(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddFacility();
+                    }
+                  }}
+                  placeholder="Tambah fasilitas (mis. Mushola)"
+                  className="flex-1 min-w-0 min-h-[44px] h-11 px-3 rounded-xl border border-gray-300 text-xs text-[#111827] focus:border-[#111827] focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddFacility}
+                  className="min-h-[44px] px-4 h-11 rounded-xl bg-gray-100 hover:bg-gray-200 border border-gray-300 cursor-pointer text-xs font-bold text-[#111827] transition-colors shrink-0"
+                >
+                  Tambah
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full sm:w-auto min-h-[44px] px-6 h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer text-white text-xs font-bold transition-colors"
+              >
+                {isSubmitting ? 'Menyimpan...' : 'Simpan Profil Destinasi'}
               </button>
             </div>
-          </div>
-
-          <div className="pt-2 flex justify-end">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="min-h-[44px] px-6 h-11 rounded-xl bg-[#111827] hover:bg-black disabled:opacity-60 text-white text-xs font-bold transition-colors"
-            >
-              {isSubmitting ? 'Menyimpan...' : 'Simpan Profil Destinasi'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       ) : activeTab === 'overview' ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
