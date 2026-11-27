@@ -525,31 +525,30 @@ export const BookingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const paidAt = new Date().toISOString();
     const issuedTickets: ETicket[] = [];
 
-    for (const item of target.items) {
-      for (let i = 0; i < item.quantity; i++) {
-        const ticketCode = generateTicketCode();
-        const signatureHash = generateMockSignatureHash(
-          ticketCode,
-          target.venueId,
-          item.bookingDate,
-        );
-        issuedTickets.push({
-          id: `tk_${Date.now()}_${i}`,
-          ticketCode,
-          invoiceNumber: target.invoiceNumber,
-          venueId: target.venueId,
-          venueCode: target.venueCode,
-          venueName: target.venueName,
-          venueAddress: target.venueAddress,
-          ticketTitle: item.ticketTitle,
-          bookingDate: item.bookingDate,
-          signatureHash,
-          qrPayload: `${ticketCode}|${target.venueId}|${item.bookingDate}|${signatureHash}`,
-          status: 'VALID',
-          holderName,
-          paidAt,
-        });
-      }
+    for (const [idx, item] of target.items.entries()) {
+      const ticketCode = generateTicketCode();
+      const signatureHash = generateMockSignatureHash(
+        ticketCode,
+        target.venueId,
+        item.bookingDate,
+      );
+      issuedTickets.push({
+        id: `tk_${Date.now()}_${idx}`,
+        ticketCode,
+        invoiceNumber: target.invoiceNumber,
+        venueId: target.venueId,
+        venueCode: target.venueCode,
+        venueName: target.venueName,
+        venueAddress: target.venueAddress,
+        ticketTitle: item.ticketTitle,
+        bookingDate: item.bookingDate,
+        signatureHash,
+        qrPayload: `${ticketCode}|${target.venueId}|${item.bookingDate}|${signatureHash}`,
+        status: 'VALID',
+        quantity: item.quantity,
+        holderName,
+        paidAt,
+      });
     }
 
     const nextTransactions = state.transactions.map((t) =>

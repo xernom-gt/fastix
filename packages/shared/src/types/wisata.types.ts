@@ -88,6 +88,7 @@ export interface ETicket {
   signatureHash: string;
   qrPayload: string; // {ticket_code}|{venue_id}|{booking_date}|{signature_hash}
   status: RedemptionStatus;
+  quantity?: number;
   holderName: string;
   paidAt: string;
   redeemedAt?: string;

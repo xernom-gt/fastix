@@ -47,6 +47,7 @@ interface TicketDetailCardProps {
 
 function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCardProps) {
   const statusMeta = TICKET_STATUS_META[ticket.status];
+  const visitorCount = ticket.quantity ?? 1;
 
   return (
     <div className="relative rounded-3xl">
@@ -93,7 +94,7 @@ function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCa
           <p className="text-xs text-gray-300 leading-relaxed break-words">{ticket.venueAddress}</p>
         </div>
 
-        <div className="p-5 sm:p-6 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+        <div className="p-5 sm:p-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div className="min-w-0">
             <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-600">
               Tanggal Masuk
@@ -110,7 +111,15 @@ function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCa
               {ticket.ticketTitle}
             </span>
           </div>
-          <div className="col-span-2 sm:col-span-1 min-w-0">
+          <div className="min-w-0">
+            <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-600">
+              Jumlah Pengunjung
+            </span>
+            <span className="font-bold text-gray-900 block mt-0.5">
+              {visitorCount} Orang
+            </span>
+          </div>
+          <div className="min-w-0">
             <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-600">
               Pemegang
             </span>
@@ -118,7 +127,7 @@ function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCa
               {ticket.holderName}
             </span>
           </div>
-          <div className="col-span-2 sm:col-span-3 min-w-0">
+          <div className="col-span-2 sm:col-span-4 min-w-0">
             <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-600">
               Nomor Invoice
             </span>
@@ -190,8 +199,8 @@ function TicketDetailCard({ ticket, isTearing = false, onClose }: TicketDetailCa
             </div>
           ) : ticket.status === 'VALID' ? (
             <p className="text-xs text-gray-600 leading-relaxed">
-              Tunjukkan kode QR ini ke petugas loket saat tiba di lokasi. Setiap tiket hanya berlaku
-              untuk 1 kali masuk.
+              Tunjukkan kode QR ini ke petugas loket saat tiba di lokasi. Tiket berlaku untuk{' '}
+              {visitorCount} orang dalam 1 kali masuk.
             </p>
           ) : ticket.status === 'REDEEMED' ? (
             <p className="text-xs text-gray-600 leading-relaxed">
@@ -534,6 +543,7 @@ export default function TicketsPage() {
                   {validTickets.map((t) => {
                     const selected = desktopActiveTicket?.id === t.id;
                     const badge = TICKET_STATUS_META[t.status];
+                    const visitorCount = t.quantity ?? 1;
                     return (
                       <button
                         key={t.id}
@@ -557,7 +567,7 @@ export default function TicketsPage() {
                         </div>
                         <p className="text-sm font-bold text-gray-900 truncate">{t.venueName}</p>
                         <p className="text-xs text-gray-600 truncate">
-                          {t.ticketTitle} · {formatTanggalID(t.bookingDate)}
+                          {t.ticketTitle} · {visitorCount} Orang · {formatTanggalID(t.bookingDate)}
                         </p>
                       </button>
                     );
@@ -712,6 +722,7 @@ export default function TicketsPage() {
                 {historyTickets.map((t) => {
                   const selected = selectedHistoryTicket?.id === t.id;
                   const badge = TICKET_STATUS_META[t.status];
+                  const visitorCount = t.quantity ?? 1;
                   return (
                     <button
                       key={t.id}
@@ -735,7 +746,7 @@ export default function TicketsPage() {
                       </div>
                       <p className="text-sm font-bold text-gray-900 truncate">{t.venueName}</p>
                       <p className="text-xs text-gray-600 truncate">
-                        {t.ticketTitle} · {formatTanggalID(t.bookingDate)}
+                        {t.ticketTitle} · {visitorCount} Orang · {formatTanggalID(t.bookingDate)}
                       </p>
                     </button>
                   );
