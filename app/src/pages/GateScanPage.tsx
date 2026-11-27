@@ -22,17 +22,20 @@ interface ApiErrorBody {
   message?: string;
 }
 
+type GateTicket = ETicket & { quantity?: number };
+
 interface GateTicketsTodayResponse extends ApiErrorBody {
-  data?: ETicket[] | { tickets?: ETicket[] };
+  data?: GateTicket[] | { tickets?: GateTicket[] };
 }
 
 interface GateRedeemResponse extends ApiErrorBody {
   data?: {
-    ticket?: Partial<ETicket>;
+    ticket?: Partial<GateTicket>;
     redeemedAt?: string;
     holderName?: string;
     ticketTitle?: string;
     ticketCode?: string;
+    quantity?: number;
   };
 }
 
@@ -82,7 +85,7 @@ export default function GateScanPage() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'REDEEMED'>('ALL');
   const [mobileTab, setMobileTab] = useState<'scan' | 'list'>('scan');
   const [searchQuery, setSearchQuery] = useState('');
-  const [apiTickets, setApiTickets] = useState<ETicket[] | null>(null);
+  const [apiTickets, setApiTickets] = useState<GateTicket[] | null>(null);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
   const [isRedeeming, setIsRedeeming] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -218,7 +221,7 @@ export default function GateScanPage() {
     }
   }, [isOfflineMode, gateToken, venueId, fetchTodayTickets]);
 
-  const venueTickets = useMemo(() => {
+  const venueTickets = useMemo<GateTicket[]>(() => {
     if (!staff) return [];
     if (apiTickets) return apiTickets;
     return tickets.filter((t) => t.venueId === staff.venueId);
@@ -313,12 +316,14 @@ export default function GateScanPage() {
       saveOfflineQueue(nextQueue);
     }
 
+    const qty = target.quantity ?? 1;
+
     setOutcome({
       accepted: true,
       headline: isOfflineMode
         ? 'VALID • Disimpan ke Antrean Offline'
         : 'VALID • Check-in Berhasil',
-      detail: `${target.holderName} (${target.ticketTitle})`,
+      detail: `${target.holderName} (${target.ticketTitle} • ${qty} Orang)`,
       ticketCode: target.ticketCode,
     });
     setManualInput('');
@@ -380,6 +385,7 @@ export default function GateScanPage() {
         payload.data?.holderName ?? ticketData?.holderName ?? matched?.holderName ?? 'Pengunjung';
       const ticketTitle =
         payload.data?.ticketTitle ?? ticketData?.ticketTitle ?? matched?.ticketTitle ?? 'E-Ticket';
+      const qty = payload.data?.quantity ?? ticketData?.quantity ?? matched?.quantity ?? 1;
 
       redeemTicket(code);
       if (apiTickets) {
@@ -397,7 +403,7 @@ export default function GateScanPage() {
       setOutcome({
         accepted: true,
         headline: 'VALID • Check-in Berhasil',
-        detail: `${holderName} (${ticketTitle})`,
+        detail: `${holderName} (${ticketTitle} • ${qty} Orang)`,
         ticketCode: code,
       });
       setManualInput('');
@@ -1000,7 +1006,9 @@ export default function GateScanPage() {
                         {t.ticketCode}
                       </p>
                       <p className="text-xs font-semibold text-gray-700 truncate">{t.holderName}</p>
-                      <p className="text-[11px] text-gray-500 truncate">{t.ticketTitle}</p>
+                      <p className="text-[11px] text-gray-500 truncate">
+                        {t.ticketTitle} • {t.quantity ?? 1} Orang
+                      </p>
                     </div>
                     <span
                       className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold shrink-0 ${
